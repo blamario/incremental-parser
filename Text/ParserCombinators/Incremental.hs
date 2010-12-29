@@ -26,7 +26,7 @@ module Text.ParserCombinators.Incremental
     -- * The Parser type
     Parser, 
     -- * Using a Parser
-    cofmapInput, feed, feedEof, feedAll, feedShortestPrefix, results, partialResults,
+    cofmapInput, feed, feedEof, feedAll, feedLongestPrefix, feedShortestPrefix, results, partialResults,
     -- * Parser primitives
     empty, eof, anyToken, acceptAll, count, prefixOf, whilePrefixOf, while,
     skip, optional, many, many1, manyTill,
@@ -35,11 +35,11 @@ module Text.ParserCombinators.Incremental
    )
 where
 
-import Prelude hiding (and, foldr, sequence)
+import Prelude hiding (and, foldl, sequence)
 import Control.Applicative (Applicative, pure, (<*>))
 import Control.Monad (liftM2)
 import Data.Monoid (Monoid, mempty, mappend)
-import Data.Foldable (Foldable, foldr)
+import Data.Foldable (Foldable, foldl)
 
 -- | This is a cofunctor data type for selecting a prefix of an input stream. If the next input item is acceptable, the
 -- ticker function returns the ticker for the rest of the stream. If not, it returns 'Nothing'.
@@ -70,16 +70,28 @@ feedEof (LookAhead p) = lookAhead (feedEof p)
 feedEof (LookAheadNot r p) = lookAheadNot r (feedEof p)
 
 feedAll :: Foldable f => f s -> Parser s r -> Parser s r
-feedAll s p = foldr feed p s
+feedAll s p = foldl (flip feed) p s
 
 feedShortestPrefix :: Foldable f => f s -> Parser s r -> ([s], Parser s r)
-feedShortestPrefix s p = case foldr feedOrStore (Nothing, p) s
+feedShortestPrefix s p = case foldl feedOrStore (Nothing, p) s
                          of (Nothing, p') -> ([], p')
                             (Just f, p') -> (f [], p')
+   where feedOrStore :: (Maybe ([s] -> [s]), Parser s r) -> s -> (Maybe ([s] -> [s]), Parser s r)
+         feedOrStore (Nothing, p) x = if null (results p) then (Nothing, feed x p) else (Just (x :), p)
+         feedOrStore (Just store, p) x = (Just (store . (x :)), p)
 
-feedOrStore :: s -> (Maybe ([s] -> [s]), Parser s r) -> (Maybe ([s] -> [s]), Parser s r)
-feedOrStore x (Nothing, p) = if null (results p) then (Nothing, feed x p) else (Just (x :), p)
-feedOrStore x (Just store, p) = (Just (store . (x :)), p)
+feedLongestPrefix :: Foldable f => f s -> Parser s r -> ([s], Parser s r)
+feedLongestPrefix s p = case foldl feedOrStore (Nothing, p) s
+                        of (Nothing, p') -> ([], p')
+                           (Just f, p') -> (f [], p')
+   where feedOrStore :: (Maybe ([s] -> [s]), Parser s r) -> s -> (Maybe ([s] -> [s]), Parser s r)
+         feedOrStore (Nothing, Failure) x = (Just (x :), Failure)
+         feedOrStore (Nothing, p@Result{}) x = (Just (x :), p)
+         feedOrStore (Nothing, p) x = case feed x p 
+                                      of Failure -> (Just (x :), p)
+                                         p'@Result{} -> (Just id, p')
+                                         p' -> (Nothing, p')
+         feedOrStore (Just store, p) x = (Just (store . (x :)), p)
 
 feedListPrefix :: Parser s r -> [s] -> Either ([r], [s], Parser s r) (Parser s r)
 feedListPrefix p l = case results p 
@@ -120,6 +132,15 @@ instance Applicative (Parser s) where
    Choice p1a p1b <*> p2 = choice (p1a <*> p2) (p1b <*> p2)
    More f <*> p = More (\x-> f x <*> p)
    p1 <*> p2 = resolve (<*> p2) p1
+
+instance (Monoid r, Show r) => Show (Parser s r) where
+   show Failure = "Failure"
+   show (Result r) = "Result " ++ show r
+   show (ResultPart f p) = "(ResultPart " ++ shows (f mempty) (" " ++ shows p ")")
+   show (Choice p1 p2) = "(Choice " ++ shows p1 (" " ++ shows p2 ")")
+   show (More f) = "More"
+   show (LookAhead p) = "(LookAhead " ++ shows p ")"
+   show (LookAheadNot r p) = "(LookAheadNot " ++ shows r (" " ++ shows p ")")
 
 resolve :: (Parser s a -> Parser s b) -> Parser s a -> Parser s b
 resolve f p = choice (f (feedEof p)) (More (\x-> f (feed x p))) 
@@ -198,13 +219,13 @@ prefixOf list = whilePrefixOf (map (==) list)
 -- argument list. The length of the predicate list thus determines the maximum number of acepted values.
 whilePrefixOf :: [x -> Bool] -> Parser x [x]
 whilePrefixOf (p : rest) = 
-   Choice (More $ \x-> if p x then resultPart (x:) (whilePrefixOf rest) else Result []) (Result [])
+   Choice (More $ \x-> if p x then resultPart (x:) (whilePrefixOf rest) else Failure) (Result [])
 whilePrefixOf [] = Result []
 
 -- | A parser that accepts all input as long as it matches the given predicate.
 while :: (x -> Bool) -> Parser x [x]
 while p = t
-   where t = Choice (More (\x-> if p x then ResultPart (x:) t else Result [])) (Result [])
+   where t = Choice (More (\x-> if p x then ResultPart (x:) t else Failure)) (Result [])
 
 optional :: Monoid r => Parser s r -> Parser s r
 optional p = Choice p (Result mempty)
@@ -223,8 +244,8 @@ manyTill next end = t
    where t = choice (skip end) (sequence next t)
 
 -- | A parser that accepts all input.
-acceptAll :: Monoid s => Parser s s
-acceptAll = choice (More $ \x-> ResultPart (mappend x) acceptAll) (Result mempty)
+acceptAll :: Parser s [s]
+acceptAll = choice (More $ \x-> ResultPart (x:) acceptAll) (Result mempty)
 
 -- | Parallel parser conjunction: the result of the combinator keeps accepting input as long as both arguments do.
 and :: (Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
