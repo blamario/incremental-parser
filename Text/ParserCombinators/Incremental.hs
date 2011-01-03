@@ -31,11 +31,11 @@ module Text.ParserCombinators.Incremental
     empty, eof, anyToken, acceptAll, count, prefixOf, whilePrefixOf, while,
     skip, optional, many, many1, manyTill,
     -- * Parser combinators
-    choice, sequence, lookAhead, lookAheadNot, and
+    choice, (<>), lookAhead, lookAheadNot, and
    )
 where
 
-import Prelude hiding (and, foldl, sequence)
+import Prelude hiding (and, foldl)
 import Control.Applicative (Applicative, pure, (<*>))
 import Control.Monad (liftM2)
 import Data.Monoid (Monoid, mempty, mappend)
@@ -80,6 +80,22 @@ feedShortestPrefix s p = case foldl feedOrStore (Nothing, p) s
          feedOrStore (Nothing, p) x = if null (results p) then (Nothing, feed x p) else (Just (x :), p)
          feedOrStore (Just store, p) x = (Just (store . (x :)), p)
 
+remainders :: (Foldable f, Monoid r) => f s -> Parser s r -> Parser s (r, [s])
+remainders s p = feedAll s (bimap (\x-> (x, [])) (\f (x, y)-> (f x, y)) p <> bimap ((,) mempty) fmap acceptAll)
+
+{-
+feedLongestPrefix :: (Foldable f, Monoid r) => f s -> Parser s r -> (Parser s r, [s])
+feedLongestPrefix s p = minimalRemainder (results $ feedEof $ remainders s $ duplicate p)
+   where minimalRemainder :: [(Parser s r, [s])] -> (Parser s r, [s])
+         minimalRemainder (pair@(_, []) : _) = pair
+         minimalRemainder (first@(_, r) : rest) = minimal' (length r) first rest
+         minimal' _ best [] = best
+         minimal' bestLen best (next@(_, r) : t) = if nextLen == 0 then next
+                                                   else if nextLen < bestLen then minimal' nextLen next t
+                                                        else minimal' bestLen best t
+            where nextLen = length r
+-}
+
 feedLongestPrefix :: Foldable f => f s -> Parser s r -> ([s], Parser s r)
 feedLongestPrefix s p = case foldl feedOrStore (Nothing, p) s
                         of (Nothing, p') -> ([], p')
@@ -117,6 +133,15 @@ instance Functor (Parser s) where
    fmap f (LookAhead p) = LookAhead (fmap f p)
    fmap f (LookAheadNot r p) = LookAheadNot (f r) (fmap f p)
 
+bimap :: (a -> b) -> ((a -> a) -> (b -> b)) -> Parser s a -> Parser s b
+bimap forth through Failure = Failure
+bimap forth through (Result r) = Result (forth r)
+bimap forth through (ResultPart f p) = ResultPart (through f) (bimap forth through p)
+bimap forth through (Choice p1 p2) = Choice (bimap forth through p1) (bimap forth through p2)
+bimap forth through (More g) = More (bimap forth through . g)
+bimap forth through (LookAhead p) = LookAhead (bimap forth through p)
+bimap forth through (LookAheadNot r p) = LookAheadNot (forth r) (bimap forth through p)
+
 instance Monad (Parser s) where
    return = Result
    Failure >>= _ = Failure
@@ -142,13 +167,24 @@ instance (Monoid r, Show r) => Show (Parser s r) where
    show (LookAhead p) = "(LookAhead " ++ shows p ")"
    show (LookAheadNot r p) = "(LookAheadNot " ++ shows r (" " ++ shows p ")")
 
+instance Monoid r => Monoid (Parser s r) where
+   mempty = empty
+   mappend = (<>)
+
 resolve :: (Parser s a -> Parser s b) -> Parser s a -> Parser s b
 resolve f p = choice (f (feedEof p)) (More (\x-> f (feed x p))) 
 
 results :: Parser s r -> [r]
 results (Result r) = [r]
+-- results (ResultPart f p) = map f (results p)
 results (Choice p1 p2) = results p1 ++ results p2
 results _ = []
+
+resultPrefix :: Monoid r => Parser s r -> (r, Parser s r)
+resultPrefix (Result r) = (r, Result mempty)
+resultPrefix (ResultPart f p) = (f r, p)
+   where (r, p) = resultPrefix p
+resultPrefix p = (mempty, p)
 
 partialResults :: Monoid r => Parser s r -> [(r, Parser s r)]
 partialResults p = collect p [(mempty, p)]
@@ -185,14 +221,18 @@ resultPart f (Result r) = Result (f r)
 resultPart f (ResultPart g p) = ResultPart (f . g) p
 resultPart f p = ResultPart f p
 
-sequence :: Monoid r => Parser s r -> Parser s r -> Parser s r
-sequence Failure _ = Failure
-sequence (Result r) p = resultPart (mappend r) p
-sequence (ResultPart r p1) p2 = resultPart r (sequence p1 p2)
-sequence (Choice p1a p1b) p2 = choice (sequence p1a p2) (sequence p1b p2)
-sequence (More f) p = More (\x-> sequence (f x) p)
-sequence p1@LookAhead{} p2 = choice (sequence (feedEof p1) p2) (More (\x-> sequence (feed x p1) (feed x p2)))
-sequence p1@LookAheadNot{} p2 = choice (sequence (feedEof p1) p2) (More (\x-> sequence (feed x p1) (feed x p2)))
+(<>) :: Monoid r => Parser s r -> Parser s r -> Parser s r
+Failure <> _ = Failure
+Result r <> p = resultPart (mappend r) p
+ResultPart r p1 <> p2 = resultPart r (p1 <> p2)
+Choice p1a p1b <> p2 = choice (p1a <> p2) (p1b <> p2)
+More f <> p = More (\x-> f x <> p)
+p1@LookAhead{} <> p2 = choice (feedEof p1 <> p2) (More (\x-> feed x p1 <> feed x p2))
+p1@LookAheadNot{} <> p2 = choice (feedEof p1 <> p2) (More (\x-> feed x p1 <> feed x p2))
+
+duplicate :: Parser s r -> Parser s (Parser s r)
+duplicate Failure = Failure
+duplicate p = Choice (More $ \x-> duplicate (feed x p)) (Result p)
 
 -- | A parser that succeeds without consuming any input.
 empty :: Monoid r => Parser s r
@@ -225,7 +265,7 @@ whilePrefixOf [] = Result []
 -- | A parser that accepts all input as long as it matches the given predicate.
 while :: (x -> Bool) -> Parser x [x]
 while p = t
-   where t = Choice (More (\x-> if p x then ResultPart (x:) t else Failure)) (Result [])
+   where t = Choice (More (\x-> if p x then resultPart (x:) t else Failure)) (Result [])
 
 optional :: Monoid r => Parser s r -> Parser s r
 optional p = Choice p (Result mempty)
@@ -237,15 +277,15 @@ many :: Monoid r => Parser s r -> Parser s r
 many p = optional (many1 p)
 
 many1 :: Monoid r => Parser s r -> Parser s r
-many1 p = sequence p (many p)
+many1 p = p <> many p
 
 manyTill :: Monoid r => Parser s r -> Parser s r' -> Parser s r
 manyTill next end = t
-   where t = choice (skip end) (sequence next t)
+   where t = choice (skip end) (next <> t)
 
 -- | A parser that accepts all input.
 acceptAll :: Parser s [s]
-acceptAll = choice (More $ \x-> ResultPart (x:) acceptAll) (Result mempty)
+acceptAll = choice (More $ \x-> resultPart (x:) acceptAll) (Result [])
 
 -- | Parallel parser conjunction: the result of the combinator keeps accepting input as long as both arguments do.
 and :: (Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
