@@ -31,7 +31,7 @@ module Text.ParserCombinators.Incremental
     empty, eof, anyToken, acceptAll, count, prefixOf, whilePrefixOf, while,
     skip, optional, many, many1, manyTill,
     -- * Parser combinators
-    choice, (<>), lookAhead, lookAheadNot, and
+    choice, (><), (>><), lookAhead, lookAheadNot, and
    )
 where
 
@@ -47,6 +47,7 @@ data Parser s r = Failure
                 | Result r
                 | ResultPart (r -> r) (Parser s r)
                 | Choice (Parser s r) (Parser s r)
+                | CommitedLeftChoice (Parser s r) (Parser s r)
                 | More (s -> Parser s r)
                 | LookAhead (Parser s r)
                 | LookAheadNot r (Parser s r)
@@ -56,6 +57,7 @@ feed _ Failure = Failure
 feed _ Result{} = Failure
 feed x (ResultPart r p) = resultPart r (feed x p)
 feed x (Choice p1 p2) = choice (feed x p1) (feed x p2)
+feed x (CommitedLeftChoice p1 p2) = commitedLeftChoice (feed x p1) (feed x p2)
 feed x (More f) = f x
 feed x (LookAhead p) = lookAhead  (feed x p)
 feed x (LookAheadNot r p) = lookAheadNot r (feed x p)
@@ -65,6 +67,7 @@ feedEof Failure = Failure
 feedEof p@Result{} = p
 feedEof (ResultPart r p) = resultPart r (feedEof p)
 feedEof (Choice p1 p2) = choice (feedEof p1) (feedEof p2)
+feedEof (CommitedLeftChoice p1 p2) = commitedLeftChoice (feedEof p1) (feedEof p2)
 feedEof More{} = Failure
 feedEof (LookAhead p) = lookAhead (feedEof p)
 feedEof (LookAheadNot r p) = lookAheadNot r (feedEof p)
@@ -81,7 +84,7 @@ feedShortestPrefix s p = case foldl feedOrStore (Nothing, p) s
          feedOrStore (Just store, p) x = (Just (store . (x :)), p)
 
 remainders :: (Foldable f, Monoid r) => f s -> Parser s r -> Parser s (r, [s])
-remainders s p = feedAll s (bimap (\x-> (x, [])) (\f (x, y)-> (f x, y)) p <> bimap ((,) mempty) fmap acceptAll)
+remainders s p = feedAll s (bimap (\x-> (x, [])) (\f (x, y)-> (f x, y)) p >< bimap ((,) mempty) fmap acceptAll)
 
 {-
 feedLongestPrefix :: (Foldable f, Monoid r) => f s -> Parser s r -> (Parser s r, [s])
@@ -120,6 +123,7 @@ cofmapInput f Failure = Failure
 cofmapInput f (Result r) = Result r
 cofmapInput f (ResultPart r p) = ResultPart r (cofmapInput f p)
 cofmapInput f (Choice p1 p2) = Choice (cofmapInput f p1) (cofmapInput f p2)
+cofmapInput f (CommitedLeftChoice p1 p2) = CommitedLeftChoice (cofmapInput f p1) (cofmapInput f p2)
 cofmapInput f (More g) = More (cofmapInput f . g . f)
 cofmapInput f (LookAhead p) = LookAhead (cofmapInput f p)
 cofmapInput f (LookAheadNot r p) = LookAheadNot r (cofmapInput f p)
@@ -129,6 +133,7 @@ instance Functor (Parser s) where
    fmap f (Result r) = Result (f r)
    fmap f p@ResultPart{} = resolve (fmap f) p
    fmap f (Choice p1 p2) = Choice (fmap f p1) (fmap f p2)
+   fmap f (CommitedLeftChoice p1 p2) = CommitedLeftChoice (fmap f p1) (fmap f p2)
    fmap f (More g) = More (fmap f . g)
    fmap f (LookAhead p) = LookAhead (fmap f p)
    fmap f (LookAheadNot r p) = LookAheadNot (f r) (fmap f p)
@@ -138,6 +143,7 @@ bimap forth through Failure = Failure
 bimap forth through (Result r) = Result (forth r)
 bimap forth through (ResultPart f p) = ResultPart (through f) (bimap forth through p)
 bimap forth through (Choice p1 p2) = Choice (bimap forth through p1) (bimap forth through p2)
+bimap forth through (CommitedLeftChoice p1 p2) = CommitedLeftChoice (bimap forth through p1) (bimap forth through p2)
 bimap forth through (More g) = More (bimap forth through . g)
 bimap forth through (LookAhead p) = LookAhead (bimap forth through p)
 bimap forth through (LookAheadNot r p) = LookAheadNot (forth r) (bimap forth through p)
@@ -163,13 +169,14 @@ instance (Monoid r, Show r) => Show (Parser s r) where
    show (Result r) = "Result " ++ show r
    show (ResultPart f p) = "(ResultPart " ++ shows (f mempty) (" " ++ shows p ")")
    show (Choice p1 p2) = "(Choice " ++ shows p1 (" " ++ shows p2 ")")
+   show (CommitedLeftChoice p1 p2) = "(CommitedLeftChoice " ++ shows p1 (" " ++ shows p2 ")")
    show (More f) = "More"
    show (LookAhead p) = "(LookAhead " ++ shows p ")"
    show (LookAheadNot r p) = "(LookAheadNot " ++ shows r (" " ++ shows p ")")
 
 instance Monoid r => Monoid (Parser s r) where
    mempty = empty
-   mappend = (<>)
+   mappend = (><)
 
 resolve :: (Parser s a -> Parser s b) -> Parser s a -> Parser s b
 resolve f p = choice (f (feedEof p)) (More (\x-> f (feed x p))) 
@@ -178,6 +185,8 @@ results :: Parser s r -> [r]
 results (Result r) = [r]
 -- results (ResultPart f p) = map f (results p)
 results (Choice p1 p2) = results p1 ++ results p2
+results (CommitedLeftChoice p1 p2) = case results p1 of [] -> results p2 
+                                                        r -> r
 results _ = []
 
 resultPrefix :: Monoid r => Parser s r -> (r, Parser s r)
@@ -190,6 +199,8 @@ partialResults :: Monoid r => Parser s r -> [(r, Parser s r)]
 partialResults p = collect p [(mempty, p)]
    where collect (ResultPart f p) rest = [(f r, p') | (r, p') <- partialResults p] ++ rest
          collect (Choice p1 p2) rest = collect p1 (collect p2 rest)
+         collect (CommitedLeftChoice p1 p2) rest = case collect p1 [] of [] -> collect p2 rest
+                                                                         r -> r ++ rest
          collect p rest = rest
 
 choice :: Parser s r -> Parser s r -> Parser s r
@@ -197,6 +208,13 @@ choice Failure p = p
 choice p Failure = p
 choice (More f) (More g) = More (\x-> choice (f x) (g x))
 choice p1 p2 = Choice p1 p2
+
+commitedLeftChoice :: Parser s r -> Parser s r -> Parser s r
+commitedLeftChoice Failure p = p
+commitedLeftChoice p Failure = p
+commitedLeftChoice p@Result{} _ = p
+commitedLeftChoice (More f) (More g) = More (\x-> commitedLeftChoice (f x) (g x))
+commitedLeftChoice p1 p2 = CommitedLeftChoice p1 p2
 
 lookAhead  :: Parser s r -> Parser s r
 lookAhead  Failure = Failure
@@ -221,14 +239,28 @@ resultPart f (Result r) = Result (f r)
 resultPart f (ResultPart g p) = ResultPart (f . g) p
 resultPart f p = ResultPart f p
 
-(<>) :: Monoid r => Parser s r -> Parser s r -> Parser s r
-Failure <> _ = Failure
-Result r <> p = resultPart (mappend r) p
-ResultPart r p1 <> p2 = resultPart r (p1 <> p2)
-Choice p1a p1b <> p2 = choice (p1a <> p2) (p1b <> p2)
-More f <> p = More (\x-> f x <> p)
-p1@LookAhead{} <> p2 = choice (feedEof p1 <> p2) (More (\x-> feed x p1 <> feed x p2))
-p1@LookAheadNot{} <> p2 = choice (feedEof p1 <> p2) (More (\x-> feed x p1 <> feed x p2))
+(><) :: Monoid r => Parser s r -> Parser s r -> Parser s r
+Failure >< _ = Failure
+Result r >< p = resultPart (mappend r) p
+ResultPart r p1 >< p2 = resultPart r (p1 >< p2)
+Choice p1a p1b >< p2 = choice (p1a >< p2) (p1b >< p2)
+More f >< p = More (\x-> f x >< p)
+p1@LookAhead{} >< p2 = choice (feedEof p1 >< p2) (More (\x-> feed x p1 >< feed x p2))
+p1@LookAheadNot{} >< p2 = choice (feedEof p1 >< p2) (More (\x-> feed x p1 >< feed x p2))
+p1 >< p2 = resolve (>< p2) p1
+
+(>><) :: Monoid r => Parser s r -> Parser s r -> Parser s r
+Failure >>< _ = Failure
+Result r >>< p = resultPart (mappend r) p
+ResultPart r p1 >>< p2 = resultPart r (p1 >>< p2)
+Choice p1a p1b >>< p2 = choice (p1a >>< p2) (p1b >>< p2)
+p1@CommitedLeftChoice{} >>< p2 = 
+   CommitedLeftChoice
+      (More (\x-> commitedLeftChoice (feed x p1 >>< p2) (feedEof p1 >>< feed x p2))) 
+      (feedEof p1 >>< feedEof p2)
+More f >>< p = More (\x-> f x >>< p)
+p1@LookAhead{} >>< p2 = choice (feedEof p1 >>< p2) (More (\x-> feed x p1 >>< feed x p2))
+p1@LookAheadNot{} >>< p2 = choice (feedEof p1 >>< p2) (More (\x-> feed x p1 >>< feed x p2))
 
 duplicate :: Parser s r -> Parser s (Parser s r)
 duplicate Failure = Failure
@@ -259,13 +291,13 @@ prefixOf list = whilePrefixOf (map (==) list)
 -- argument list. The length of the predicate list thus determines the maximum number of acepted values.
 whilePrefixOf :: [x -> Bool] -> Parser x [x]
 whilePrefixOf (p : rest) = 
-   Choice (More $ \x-> if p x then resultPart (x:) (whilePrefixOf rest) else Failure) (Result [])
+   CommitedLeftChoice (More $ \x-> if p x then resultPart (x:) (whilePrefixOf rest) else Failure) (Result [])
 whilePrefixOf [] = Result []
 
 -- | A parser that accepts all input as long as it matches the given predicate.
 while :: (x -> Bool) -> Parser x [x]
 while p = t
-   where t = Choice (More (\x-> if p x then resultPart (x:) t else Failure)) (Result [])
+   where t = CommitedLeftChoice (More (\x-> if p x then resultPart (x:) t else Failure)) (Result [])
 
 optional :: Monoid r => Parser s r -> Parser s r
 optional p = Choice p (Result mempty)
@@ -277,15 +309,15 @@ many :: Monoid r => Parser s r -> Parser s r
 many p = optional (many1 p)
 
 many1 :: Monoid r => Parser s r -> Parser s r
-many1 p = p <> many p
+many1 p = p >>< many p
 
 manyTill :: Monoid r => Parser s r -> Parser s r' -> Parser s r
 manyTill next end = t
-   where t = choice (skip end) (next <> t)
+   where t = commitedLeftChoice (skip end) (next >>< t)
 
 -- | A parser that accepts all input.
 acceptAll :: Parser s [s]
-acceptAll = choice (More $ \x-> resultPart (x:) acceptAll) (Result [])
+acceptAll = CommitedLeftChoice (More $ \x-> resultPart (x:) acceptAll) (Result [])
 
 -- | Parallel parser conjunction: the result of the combinator keeps accepting input as long as both arguments do.
 and :: (Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
