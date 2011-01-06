@@ -26,7 +26,7 @@ module Text.ParserCombinators.Incremental
     -- * The Parser type
     Parser, 
     -- * Using a Parser
-    cofmapInput, feed, feedEof, feedAll, feedLongestPrefix, feedShortestPrefix, results, partialResults,
+    cofmapInput, feed, feedEof, feedAll, feedLongestPrefix, feedShortestPrefix, results, resultPrefix,
     -- * Parser primitives
     empty, eof, anyToken, acceptAll, count, prefixOf, whilePrefixOf, while,
     skip, optional, many, many1, manyTill,
@@ -39,7 +39,7 @@ import Prelude hiding (and, foldl)
 import Control.Applicative (Applicative, pure, (<*>))
 import Control.Monad (liftM2)
 import Data.Monoid (Monoid, mempty, mappend)
-import Data.Foldable (Foldable, foldl)
+import Data.Foldable (Foldable, foldl, toList)
 
 -- | This is a cofunctor data type for selecting a prefix of an input stream. If the next input item is acceptable, the
 -- ticker function returns the ticker for the rest of the stream. If not, it returns 'Nothing'.
@@ -84,33 +84,12 @@ feedShortestPrefix s p = case foldl feedOrStore (Nothing, p) s
          feedOrStore (Just store, p) x = (Just (store . (x :)), p)
 
 remainders :: (Foldable f, Monoid r) => f s -> Parser s r -> Parser s (r, [s])
-remainders s p = feedAll s (bimap (\x-> (x, [])) (\f (x, y)-> (f x, y)) p >< bimap ((,) mempty) fmap acceptAll)
+remainders s p = feedAll s (bimap (\x-> (x, [])) (\f (x, y)-> (f x, y)) p >>< bimap ((,) mempty) fmap acceptAll)
 
-{-
 feedLongestPrefix :: (Foldable f, Monoid r) => f s -> Parser s r -> (Parser s r, [s])
-feedLongestPrefix s p = minimalRemainder (results $ feedEof $ remainders s $ duplicate p)
-   where minimalRemainder :: [(Parser s r, [s])] -> (Parser s r, [s])
-         minimalRemainder (pair@(_, []) : _) = pair
-         minimalRemainder (first@(_, r) : rest) = minimal' (length r) first rest
-         minimal' _ best [] = best
-         minimal' bestLen best (next@(_, r) : t) = if nextLen == 0 then next
-                                                   else if nextLen < bestLen then minimal' nextLen next t
-                                                        else minimal' bestLen best t
-            where nextLen = length r
--}
-
-feedLongestPrefix :: Foldable f => f s -> Parser s r -> ([s], Parser s r)
-feedLongestPrefix s p = case foldl feedOrStore (Nothing, p) s
-                        of (Nothing, p') -> ([], p')
-                           (Just f, p') -> (f [], p')
-   where feedOrStore :: (Maybe ([s] -> [s]), Parser s r) -> s -> (Maybe ([s] -> [s]), Parser s r)
-         feedOrStore (Nothing, Failure) x = (Just (x :), Failure)
-         feedOrStore (Nothing, p@Result{}) x = (Just (x :), p)
-         feedOrStore (Nothing, p) x = case feed x p 
-                                      of Failure -> (Just (x :), p)
-                                         p'@Result{} -> (Just id, p')
-                                         p' -> (Nothing, p')
-         feedOrStore (Just store, p) x = (Just (store . (x :)), p)
+feedLongestPrefix s p = case feedEof $ remainders s $ duplicate p
+                        of Failure -> (Failure, toList s)
+                           Result r -> r
 
 feedListPrefix :: Parser s r -> [s] -> Either ([r], [s], Parser s r) (Parser s r)
 feedListPrefix p l = case results p 
@@ -191,8 +170,8 @@ results _ = []
 
 resultPrefix :: Monoid r => Parser s r -> (r, Parser s r)
 resultPrefix (Result r) = (r, Result mempty)
-resultPrefix (ResultPart f p) = (f r, p)
-   where (r, p) = resultPrefix p
+resultPrefix (ResultPart f p) = (f r, p')
+   where (r, p') = resultPrefix p
 resultPrefix p = (mempty, p)
 
 partialResults :: Monoid r => Parser s r -> [(r, Parser s r)]
@@ -264,7 +243,8 @@ p1@LookAheadNot{} >>< p2 = choice (feedEof p1 >>< p2) (More (\x-> feed x p1 >>< 
 
 duplicate :: Parser s r -> Parser s (Parser s r)
 duplicate Failure = Failure
-duplicate p = Choice (More $ \x-> duplicate (feed x p)) (Result p)
+duplicate p@Result{} = Result p
+duplicate p = CommitedLeftChoice (More $ \x-> duplicate (feed x p)) (Result p)
 
 -- | A parser that succeeds without consuming any input.
 empty :: Monoid r => Parser s r
