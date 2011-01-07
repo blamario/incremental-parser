@@ -26,7 +26,7 @@ module Text.ParserCombinators.Incremental
     -- * The Parser type
     Parser, 
     -- * Using a Parser
-    cofmapInput, feed, feedEof, feedAll, feedLongestPrefix, feedShortestPrefix, results, resultPrefix,
+    cofmapInput, feed, feedEof, feedAll, feedListPrefix, feedLongestPrefix, feedShortestPrefix, results, resultPrefix,
     -- * Parser primitives
     empty, eof, anyToken, acceptAll, count, prefixOf, whilePrefixOf, while,
     skip, optional, many, many1, manyTill,
@@ -91,11 +91,13 @@ feedLongestPrefix s p = case feedEof $ remainders s $ duplicate p
                         of Failure -> (Failure, toList s)
                            Result r -> r
 
-feedListPrefix :: Parser s r -> [s] -> Either ([r], [s], Parser s r) (Parser s r)
-feedListPrefix p l = case results p 
-                     of [] -> case l of [] -> Right p
-                                        x:xs -> feedListPrefix (feed x p) xs
-                        rs -> Left (rs, l, p)
+feedListPrefix :: [s] -> Parser s r -> (Parser s r, [s])
+feedListPrefix l p@Result{} = (p, l)
+feedListPrefix l Failure = (Failure, l)
+feedListPrefix [] p = (p, [])
+feedListPrefix l@(x:xs) p = case feed x p
+                            of Failure -> (p, l)
+                               p' -> feedListPrefix xs p'
 
 cofmapInput :: (a -> b) -> Parser b r -> Parser a r
 cofmapInput f Failure = Failure
@@ -245,6 +247,23 @@ duplicate :: Parser s r -> Parser s (Parser s r)
 duplicate Failure = Failure
 duplicate p@Result{} = Result p
 duplicate p = CommitedLeftChoice (More $ \x-> duplicate (feed x p)) (Result p)
+
+withConsumption :: Parser s r -> Parser s (r, [s])
+withConsumption Failure = Failure
+withConsumption (Result r) = Result (r, [])
+withConsumption (ResultPart f p) = ResultPart (\(r, l)-> (f r, l)) (withConsumption p)
+withConsumption (Choice p1 p2) = choice (withConsumption p1) (withConsumption p2)
+withConsumption p@CommitedLeftChoice{} =
+   CommitedLeftChoice
+      (More (\x-> commitedLeftChoice 
+                     (withConsumption $ feed x p) 
+                     (resultPart (\(r, l)-> (r, x:l)) $ withConsumption p)))
+      (withConsumption $ feedEof p)
+withConsumption (More f) = More (withConsumption . f)
+withConsumption p@LookAhead{} = 
+   choice (withConsumption $ feedEof p) (More (\x-> resultPart (\(r, l)-> (r, x:l)) $ withConsumption $ feed x p))
+withConsumption p@LookAheadNot{} = 
+   choice (withConsumption $ feedEof p) (More (\x-> resultPart (\(r, l)-> (r, x:l)) $ withConsumption $ feed x p))
 
 -- | A parser that succeeds without consuming any input.
 empty :: Monoid r => Parser s r
