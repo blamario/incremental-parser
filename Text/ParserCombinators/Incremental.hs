@@ -29,9 +29,9 @@ module Text.ParserCombinators.Incremental
     feed, feedEof, feedAll, feedListPrefix, feedLongestPrefix, feedShortestPrefix, results, resultPrefix,
     -- * Parser primitives
     empty, eof, anyToken, acceptAll, count, prefixOf, whilePrefixOf, while,
-    skip, optional, many, many1, manyTill,
+    skip, optional, optionMaybe, many, many1, manyTill,
     -- * Parser combinators
-    choice, (><), (>><), lookAhead, lookAheadNot, and
+    choice, (><), (>><), lookAhead, lookAheadNot, and, andThen
    )
 where
 
@@ -108,11 +108,22 @@ instance Functor (Parser s) where
 
 instance Monad (Parser s) where
    return = Result id
+
    Failure >>= _ = Failure
    Result t r >>= f = feedAll (t []) (f r)
    Choice p1 p2 >>= f = choice (p1 >>= f) (p2 >>= f)
    More f >>= g = More (\x-> f x >>= g)
    p >>= f = resolve (>>= f) p
+
+   Failure >> _ = Failure
+   Result t _ >> p = feedAll (t []) p
+   ResultPart r p1 >> p2 = p1 >> p2
+   Choice p1a p1b >> p2 = choice (p1a >> p2) (p1b >> p2)
+   More f >> p = More (\x-> f x >> p)
+   (LookAhead t p1) >> p2 = choice (feedEof p1 >> p2) (More (\x-> lookAheadInto id (feed x p1) >> feedAll (t [x]) p2))
+   (LookAheadNot t r p1) >> p2 =
+      choice (feedEof p1 >> p2) (More (\x-> lookAheadNotInto id r (feed x p1) >> feedAll (t [x]) p2))
+   p1 >> p2 = resolve (>> p2) p1
 
 instance Applicative (Parser s) where
    pure = Result id
@@ -137,7 +148,8 @@ instance Monoid r => Monoid (Parser s r) where
    mappend = (><)
 
 resolve :: (Parser s a -> Parser s b) -> Parser s a -> Parser s b
-resolve f p = choice (f (feedEof p)) (More (\x-> f (feed x p))) 
+resolve f p@CommitedLeftChoice{} = CommitedLeftChoice (More (\x-> f (feed x p))) (feedEof $ f $ feedEof p)
+resolve f p = choice (f (feedEof p)) (More (\x-> f (feed x p)))
 
 results :: Parser s r -> [r]
 results (Result _ r) = [r]
@@ -273,6 +285,9 @@ while p = t
 optional :: Monoid r => Parser s r -> Parser s r
 optional p = Choice p (return mempty)
 
+optionMaybe :: Parser s r -> Parser s (Maybe r)
+optionMaybe p = commitedLeftChoice (fmap Just p) (return Nothing)
+
 skip :: Monoid r => Parser s r' -> Parser s r
 skip p = fmap (const mempty) p
 
@@ -303,3 +318,15 @@ p1 `and` Choice p2a p2b = choice (p1 `and` p2a) (p1 `and` p2b)
 More f `and` p = More (\x-> f x `and` feed x p)
 p `and` More f = More (\x-> feed x p `and` f x)
 p1 `and` p2 = choice (feedEof p1 `and` feedEof p2) (More (\x-> feed x p1 `and` feed x p2))
+
+andThen :: (Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
+Failure `andThen` _ = Failure
+Result t r `andThen` p = resultPart (mappend (r, mempty)) (feedAll (t []) (fmap ((,) mempty) p))
+ResultPart f p1 `andThen` p2 = resultPart (\(r1, r2)-> (f r1, r2)) (p1 `andThen` p2)
+Choice p1a p1b `andThen` p2 = choice (p1a `andThen` p2) (p1b `andThen` p2)
+More f `andThen` p = More (\x-> f x `andThen` p)
+(LookAhead t p1) `andThen` p2 =
+   choice (feedEof p1 `andThen` p2) (More (\x-> lookAheadInto id (feed x p1) `andThen` feedAll (t [x]) p2))
+(LookAheadNot t r p1) `andThen` p2 =
+   choice (feedEof p1 `andThen` p2) (More (\x-> lookAheadNotInto id r (feed x p1) `andThen` feedAll (t [x]) p2))
+p1 `andThen` p2 = resolve (`andThen` p2) p1
