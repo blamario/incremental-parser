@@ -28,7 +28,7 @@ module Text.ParserCombinators.Incremental
     -- * Using a Parser
     feed, feedEof, feedAll, feedListPrefix, feedLongestPrefix, feedShortestPrefix, results, resultPrefix,
     -- * Parser primitives
-    empty, eof, anyToken, acceptAll, count, prefixOf, whilePrefixOf, while,
+    empty, eof, anyToken, count, acceptAll, string, prefixOf, whilePrefixOf, while,
     skip, optional, optionMaybe, many, many1, manyTill,
     -- * Parser combinators
     (><), (>><), lookAhead, lookAheadNot, and, andThen
@@ -38,6 +38,7 @@ where
 import Prelude hiding (and, foldl)
 import Control.Applicative (Applicative (pure, (<*>)), Alternative (empty, (<|>), some, many))
 import Control.Monad (Functor (fmap), Monad (return, (>>=), (>>)), MonadPlus (mzero, mplus), liftM2)
+import Data.Maybe (fromMaybe)
 import Data.Monoid (Monoid, mempty, mappend)
 import Data.Foldable (Foldable, foldl, toList)
 
@@ -90,11 +91,12 @@ feedLongestPrefix s p = case feedEof $ feedAll s $ duplicate p
                         of Failure -> (Failure, toList s)
                            Result t r -> (r, t [])
 
-feedListPrefix :: [s] -> Parser s r -> (Parser s r, [s])
-feedListPrefix l (Result t r) = (Result id r, t l)
-feedListPrefix l Failure = (Failure, l)
-feedListPrefix [] p = (p, [])
-feedListPrefix l@(x:xs) p = feedListPrefix xs (feed x p)
+feedListPrefix :: [s] -> [s] -> Parser s r -> (Parser s r, [s])
+feedListPrefix whole chunk p = feedRest chunk p
+   where feedRest rest (Result t r) = (Result id r, t rest)
+         feedRest _ Failure = (Failure, whole)
+         feedRest [] p = (p, [])
+         feedRest (x:xs) p = feedRest xs (feed x p)
 
 instance Functor (Parser s) where
    fmap f Failure = Failure
@@ -168,9 +170,9 @@ resolve :: (Parser s a -> Parser s b) -> Parser s a -> Parser s b
 resolve f p@CommitedLeftChoice{} = CommitedLeftChoice (More (\x-> f (feed x p))) (feedEof $ f $ feedEof p)
 resolve f p = f (feedEof p) <|> More (\x-> f (feed x p))
 
-results :: Parser s r -> [r]
-results (Result _ r) = [r]
-results (ResultPart f p) = map f (results p)
+results :: Parser s r -> [(r, [s] -> [s])]
+results (Result t r) = [(r, t)]
+results (ResultPart f p) = map (\(r, t)-> (f r, t)) (results p)
 results (Choice p1@Result{} p2) = results p1 ++ results p2
 results _ = []
 
@@ -181,11 +183,11 @@ hasResult (Choice p1@Result{} _) = True
 hasResult (CommitedLeftChoice _ p) = hasResult p
 hasResult _ = False
 
-resultPrefix :: Monoid r => Parser s r -> (r, Parser s r)
-resultPrefix (Result t r) = (r, Result t mempty)
-resultPrefix (ResultPart f p) = (f r, p')
+resultPrefix :: Monoid r => Parser s r -> (Maybe r, Parser s r)
+resultPrefix (Result t r) = (Just r, Result t mempty)
+resultPrefix (ResultPart f p) = (Just (f $ fromMaybe mempty r), p')
    where (r, p') = resultPrefix p
-resultPrefix p = (mempty, p)
+resultPrefix p = (Nothing, p)
 
 partialResults :: Monoid r => Parser s r -> [(r, Parser s r)]
 partialResults p = collect p [(mempty, p)]
@@ -275,6 +277,11 @@ anyToken = More return
 count :: Int -> Parser s [s]
 count n | n > 0 = More (\x-> resultPart (x:) $ count (pred n))
         | otherwise = return []
+
+string :: Eq s => [s] -> Parser s [s]
+string whole = stringRest whole
+   where stringRest [] = return whole
+         stringRest (x : rest) = More (\y-> if x == y then stringRest rest else Failure)
 
 -- | A parser that accepts the longest prefix of input that matches a prefix of the argument list.
 prefixOf :: Eq x => [x] -> Parser x [x]
