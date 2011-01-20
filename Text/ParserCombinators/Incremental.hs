@@ -31,7 +31,7 @@ module Text.ParserCombinators.Incremental
     empty, eof, anyToken, count, acceptAll, string, prefixOf, whilePrefixOf, while,
     skip, optional, optionMaybe, many, many1, manyTill,
     -- * Parser combinators
-    (><), (>><), lookAhead, lookAheadNot, and, andThen
+    (><), (>><), lookAhead, lookAheadNot, longest, and, andThen
    )
 where
 
@@ -255,10 +255,21 @@ p1@CommitedLeftChoice{} >>< p2 =
    CommitedLeftChoice
       (More (\x-> (feed x p1 >>< p2) <<|> (feedEof p1 >>< feed x p2))) 
       (feedEof p1 >>< feedEof p2)
-More f >>< p = More (\x-> f x >>< p)
+More f >>< p = More (\x-> f x >>< feed x p)
 (LookAhead t p1) >>< p2 = (feedEof p1 >>< p2) <|> More (\x-> lookAheadInto id (feed x p1) >>< feedAll (t [x]) p2)
 (LookAheadNot t r p1) >>< p2 = 
    (feedEof p1 >>< p2) <|> More (\x-> lookAheadNotInto id r (feed x p1) >>< feedAll (t [x]) p2)
+
+longest :: Parser s r -> Parser s r
+longest Failure = Failure
+longest p@Result{} = p
+longest (ResultPart r p) = resultPart r (longest p)
+longest (More f) = More (longest . f)
+longest (Choice p1 p2@LookAhead{}) = p1 <<|> p2
+longest (Choice p1@LookAhead{} p2) = p2 <<|> p1
+longest (Choice p1 p2@Result{}) = p1 <<|> p2
+longest (Choice p1@Result{} p2) = p2 <<|> p1
+longest p = More (\x-> longest $ feed x p) <<|> longest (feedEof p)
 
 duplicate :: Parser s r -> Parser s (Parser s r)
 duplicate Failure = Failure
