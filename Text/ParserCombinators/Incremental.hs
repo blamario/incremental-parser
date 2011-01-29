@@ -19,7 +19,7 @@
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
---{-# LANGUAGE Rank2Types, ExistentialQuantification #-}
+{-# LANGUAGE Rank2Types, ExistentialQuantification #-}
 
 module Text.ParserCombinators.Incremental
    (
@@ -51,7 +51,7 @@ data Parser s r = Failure
                 | CommitedLeftChoice (Parser s r) (Parser s r)
                 | More (s -> Parser s r)
                 | LookAhead (InputTail s) (Parser s r)
-                | LookAheadNot (InputTail s) r (Parser s r)
+                | forall r'. LookAheadNot (InputTail s) (Parser s r) (Parser s r')
 
 type InputTail s = [s] -> [s]
 
@@ -63,7 +63,7 @@ feed x (Choice p1 p2) = feed x p1 <|> feed x p2
 feed x (CommitedLeftChoice p1 p2) = feed x p1 <<|> feed x p2
 feed x (More f) = f x
 feed x (LookAhead t p) = lookAheadInto (t . (x:)) (feed x p)
-feed x (LookAheadNot t r p) = lookAheadNotInto (t . (x:)) r (feed x p)
+feed x (LookAheadNot t np p) = lookAheadNotInto (t . (x:)) np (feed x p)
 
 feedEof :: Parser s r -> Parser s r
 feedEof Failure = Failure
@@ -73,7 +73,10 @@ feedEof (Choice p1 p2) = feedEof p1 <|> feedEof p2
 feedEof (CommitedLeftChoice p1 p2) = feedEof p1 <<|> feedEof p2
 feedEof More{} = Failure
 feedEof (LookAhead t p) = lookAheadInto t (feedEof p)
-feedEof (LookAheadNot t r p) = lookAheadNotInto t r (feedEof p)
+feedEof (LookAheadNot t np p) = lookAheadNotInto t np (feedEof p)
+
+feedList :: [s] -> Parser s r -> Parser s r
+feedList s p = foldl (flip feed) p s
 
 feedAll :: Foldable f => f s -> Parser s r -> Parser s r
 feedAll s p = foldl (flip feed) p s
@@ -106,12 +109,12 @@ instance Functor (Parser s) where
    fmap f (CommitedLeftChoice p1 p2) = CommitedLeftChoice (fmap f p1) (fmap f p2)
    fmap f (More g) = More (fmap f . g)
    fmap f (LookAhead t p) = LookAhead t (fmap f p)
-   fmap f (LookAheadNot t r p) = LookAheadNot t (f r) (fmap f p)
+   fmap f (LookAheadNot t np p) = LookAheadNot t (fmap f np) p
 
 instance Applicative (Parser s) where
    pure = Result id
    Failure <*> _ = Failure
-   Result t f <*> p = fmap f (feedAll (t []) p)
+   Result t f <*> p = fmap f (feedList (t []) p)
    Choice p1a p1b <*> p2 = (p1a <*> p2) <|> (p1b <*> p2)
    More f <*> p = More (\x-> f x <*> p)
    p1 <*> p2 = resolve (<*> p2) p1
@@ -133,19 +136,19 @@ instance Monad (Parser s) where
    return = Result id
 
    Failure >>= _ = Failure
-   Result t r >>= f = feedAll (t []) (f r)
+   Result t r >>= f = feedList (t []) (f r)
    Choice p1 p2 >>= f = (p1 >>= f) <|> (p2 >>= f)
    More f >>= g = More (\x-> f x >>= g)
    p >>= f = resolve (>>= f) p
 
    Failure >> _ = Failure
-   Result t _ >> p = feedAll (t []) p
+   Result t _ >> p = feedList (t []) p
    ResultPart r p1 >> p2 = p1 >> p2
    Choice p1a p1b >> p2 = (p1a >> p2) <|> (p1b >> p2)
    More f >> p = More (\x-> f x >> p)
-   (LookAhead t p1) >> p2 = (feedEof p1 >> p2) <|> More (\x-> lookAheadInto id (feed x p1) >> feedAll (t [x]) p2)
-   (LookAheadNot t r p1) >> p2 =
-      (feedEof p1 >> p2) <|> More (\x-> lookAheadNotInto id r (feed x p1) >> feedAll (t [x]) p2)
+   (LookAhead t p1) >> p2 = (feedEof p1 >> p2) <|> More (\x-> LookAhead id (feed x p1) >> feedList (t [x]) p2)
+   (LookAheadNot t np p1) >> p2 =
+      (feedEof p1 >> p2) <|> More (\x-> LookAheadNot id np (feed x p1) >> feedList (t [x]) p2)
    p1 >> p2 = resolve (>> p2) p1
 
 instance MonadPlus (Parser s) where
@@ -160,7 +163,8 @@ instance (Monoid r, Show r, Show s) => Show (Parser s r) where
    show (CommitedLeftChoice p1 p2) = "(CommitedLeftChoice " ++ shows p1 (" " ++ shows p2 ")")
    show (More f) = "More"
    show (LookAhead t p) = "(LookAhead " ++ shows (t []) (" " ++ shows p ")")
-   show (LookAheadNot t r p) = "(LookAheadNot " ++ shows (t []) (" " ++ shows r (" " ++ shows p ")"))
+   show (LookAheadNot t np p) = 
+      "(LookAheadNot " ++ shows (t []) (" " ++ shows np (" " ++ shows (fmap (const ()) p) ")"))
 
 instance Monoid r => Monoid (Parser s r) where
    mempty = return mempty
@@ -168,7 +172,7 @@ instance Monoid r => Monoid (Parser s r) where
 
 resolve :: (Parser s a -> Parser s b) -> Parser s a -> Parser s b
 resolve f p@CommitedLeftChoice{} = CommitedLeftChoice (More (\x-> f (feed x p))) (feedEof $ f $ feedEof p)
-resolve f p = Choice (LookAheadNot id (fst $ head $ results $ feedEof $ f $ feedEof p) p') p'
+resolve f p = Choice (LookAheadNot id (feedEof $ f $ feedEof p) p') p'
    where p' = More (\x-> f (feed x p))
 
 results :: Parser s r -> [(r, [s] -> [s])]
@@ -204,32 +208,32 @@ Failure <<|> p = p
 p <<|> Failure = p
 p <<|> _ | hasResult p = p
 CommitedLeftChoice p1a p1b <<|> p2 = CommitedLeftChoice p1a (p1b <<|> p2)
-ResultPart f (CommitedLeftChoice p1a p1b) <<|> p2 = CommitedLeftChoice (resultPart f p1a) (resultPart f p1b <<|> p2)
+ResultPart r (CommitedLeftChoice p1a p1b) <<|> p2 = CommitedLeftChoice (resultPart r p1a) (resultPart r p1b <<|> p2)
 More f <<|> More g = More (\x-> f x <<|> g x)
 p1 <<|> p2 = CommitedLeftChoice p1 p2
 
 lookAhead :: Parser s r -> Parser s r
 lookAhead = lookAheadInto id
 
-lookAheadNot :: r -> Parser s r -> Parser s r
-lookAheadNot = lookAheadNotInto id
+lookAheadNot :: r -> Parser s r' -> Parser s r
+lookAheadNot r = lookAheadNotInto id (return r)
 
 lookAheadInto :: InputTail s -> Parser s r -> Parser s r
 lookAheadInto _ Failure = Failure
 lookAheadInto t (Result _ r) = Result t r
 lookAheadInto t (ResultPart r p) = resultPart r (lookAheadInto t p)
 lookAheadInto t (LookAhead _ p) = LookAhead t p
-lookAheadInto t (LookAheadNot _ r p) = LookAheadNot t r p
+lookAheadInto t (LookAheadNot _ np p) = LookAheadNot t np p
 lookAheadInto t (Choice p1 p2) = lookAheadInto t p1 <|> lookAheadInto t p2
 lookAheadInto t p = LookAhead t p
 
-lookAheadNotInto :: InputTail s -> r -> Parser s r' -> Parser s r
-lookAheadNotInto t r Failure = Result t r
-lookAheadNotInto t r (ResultPart _ p) = lookAheadNotInto t r p
-lookAheadNotInto t r (LookAhead _ p) = lookAheadNotInto t r p
-lookAheadNotInto t r (LookAheadNot _ _ p) = lookAheadInto t (fmap (const r) p)
+lookAheadNotInto :: InputTail s -> Parser s r -> Parser s r' -> Parser s r
+lookAheadNotInto t np Failure = feedList (t []) np
+lookAheadNotInto t np (ResultPart _ p) = lookAheadNotInto t np p
+lookAheadNotInto t np (LookAhead _ p) = lookAheadNotInto t np p
+lookAheadNotInto t np (LookAheadNot _ _ p) = lookAheadInto t p >> np
 lookAheadNotInto _ _ p | hasResult p = Failure
-lookAheadNotInto t r p = LookAheadNot t r (fmap (const r) p)
+lookAheadNotInto t np p = LookAheadNot t np p
 
 resultPart :: (r -> r) -> Parser s r -> Parser s r
 resultPart _ Failure = Failure
@@ -240,19 +244,19 @@ resultPart f p = ResultPart f p
 infixl 5 ><
 (><) :: Monoid r => Parser s r -> Parser s r -> Parser s r
 Failure >< _ = Failure
-Result t r >< p = resultPart (mappend r) (feedAll (t []) p)
+Result t r >< p = resultPart (mappend r) (feedList (t []) p)
 ResultPart r p1 >< p2 = resultPart r (p1 >< p2)
 Choice p1a p1b >< p2 = (p1a >< p2) <|> (p1b >< p2)
 More f >< p = More (\x-> f x >< p)
-(LookAhead t p1) >< p2 = (feedEof p1 >< p2) <|> More (\x-> lookAheadInto id (feed x p1) >< feedAll (t [x]) p2)
-(LookAheadNot t r p1) >< p2 = 
-   (feedEof p1 >< p2) <|> More (\x-> lookAheadNotInto id r (feed x p1) >< feedAll (t [x]) p2)
+(LookAhead t p1) >< p2 = (feedEof p1 >< p2) <|> More (\x-> lookAheadInto id (feed x p1) >< feedList (t [x]) p2)
+p1@(LookAheadNot t np p) >< p2 = 
+   (feedEof p1 >< p2) <|> More (\x-> lookAheadNotInto id np (feed x p) >< feedList (t [x]) p2)
 p1 >< p2 = resolve (>< p2) p1
 
 infixl 5 >><
 (>><) :: Monoid r => Parser s r -> Parser s r -> Parser s r
 Failure >>< _ = Failure
-Result t r >>< p = resultPart (mappend r) (feedAll (t []) p)
+Result t r >>< p = resultPart (mappend r) (feedList (t []) p)
 ResultPart r p1 >>< p2 = resultPart r (p1 >>< p2)
 Choice p1a p1b >>< p2 = (p1a >>< p2) <|> (p1b >>< p2)
 p1@CommitedLeftChoice{} >>< p2 = 
@@ -260,9 +264,9 @@ p1@CommitedLeftChoice{} >>< p2 =
       (More (\x-> (feed x p1 >>< p2) <<|> (feedEof p1 >>< feed x p2))) 
       (feedEof p1 >>< feedEof p2)
 More f >>< p = More (\x-> f x >>< feed x p)
-(LookAhead t p1) >>< p2 = (feedEof p1 >>< p2) <|> More (\x-> lookAheadInto id (feed x p1) >>< feedAll (t [x]) p2)
-(LookAheadNot t r p1) >>< p2 = 
-   (feedEof p1 >>< p2) <|> More (\x-> lookAheadNotInto id r (feed x p1) >>< feedAll (t [x]) p2)
+(LookAhead t p1) >>< p2 = (feedEof p1 >>< p2) <|> More (\x-> lookAheadInto id (feed x p1) >>< feedList (t [x]) p2)
+p1@(LookAheadNot t np p) >>< p2 =
+   (feedEof p1 >>< p2) <|> More (\x-> lookAheadNotInto id np (feed x p) >>< feedList (t [x]) p2)
 
 longest :: Parser s r -> Parser s r
 longest Failure = Failure
@@ -282,7 +286,7 @@ duplicate p = CommitedLeftChoice (More $ \x-> duplicate (feed x p)) (return p)
 
 -- | A parser that fails on any input.
 eof :: Monoid r => Parser s r
-eof = lookAheadNotInto id mempty anyToken
+eof = lookAheadNotInto id (return mempty) anyToken
 
 -- | A parser that accepts a single input item.
 anyToken :: Parser s s
@@ -365,12 +369,12 @@ p1 `and` p2 = (feedEof p1 `and` feedEof p2) <|> More (\x-> feed x p1 `and` feed 
 
 andThen :: (Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
 Failure `andThen` _ = Failure
-Result t r `andThen` p = resultPart (mappend (r, mempty)) (feedAll (t []) (fmap ((,) mempty) p))
+Result t r `andThen` p = resultPart (mappend (r, mempty)) (feedList (t []) (fmap ((,) mempty) p))
 ResultPart f p1 `andThen` p2 = resultPart (\(r1, r2)-> (f r1, r2)) (p1 `andThen` p2)
 Choice p1a p1b `andThen` p2 = (p1a `andThen` p2) <|> (p1b `andThen` p2)
 More f `andThen` p = More (\x-> f x `andThen` p)
 (LookAhead t p1) `andThen` p2 =
-   (feedEof p1 `andThen` p2) <|> More (\x-> lookAheadInto id (feed x p1) `andThen` feedAll (t [x]) p2)
-(LookAheadNot t r p1) `andThen` p2 =
-   (feedEof p1 `andThen` p2) <|> More (\x-> lookAheadNotInto id r (feed x p1) `andThen` feedAll (t [x]) p2)
+   (feedEof p1 `andThen` p2) <|> More (\x-> lookAheadInto id (feed x p1) `andThen` feedList (t [x]) p2)
+p1@(LookAheadNot t np p) `andThen` p2 =
+   (feedEof p1 `andThen` p2) <|> More (\x-> lookAheadNotInto id np (feed x p) `andThen` feedList (t [x]) p2)
 p1 `andThen` p2 = resolve (`andThen` p2) p1
