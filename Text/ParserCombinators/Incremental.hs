@@ -28,10 +28,10 @@ module Text.ParserCombinators.Incremental
     -- * Using a Parser
     feed, feedEof, feedAll, feedListPrefix, feedLongestPrefix, feedShortestPrefix, results, resultPrefix,
     -- * Parser primitives
-    empty, eof, anyToken, count, acceptAll, string, prefixOf, whilePrefixOf, while,
-    skip, optional, optionMaybe, many, many1, manyTill,
+    empty, eof, anyToken, token, satisfy, count, acceptAll, string, prefixOf, whilePrefixOf, while, while1,
+    skip, optional, optionMaybe, many, many0, many1, manyTill,
     -- * Parser combinators
-    (><), (>><), lookAhead, lookAheadNot, longest, and, andThen
+    (><), (>><), (<<|>), lookAhead, lookAheadNot, longest, and, andThen
    )
 where
 
@@ -168,7 +168,8 @@ instance Monoid r => Monoid (Parser s r) where
 
 resolve :: (Parser s a -> Parser s b) -> Parser s a -> Parser s b
 resolve f p@CommitedLeftChoice{} = CommitedLeftChoice (More (\x-> f (feed x p))) (feedEof $ f $ feedEof p)
-resolve f p = f (feedEof p) <|> More (\x-> f (feed x p))
+resolve f p = Choice (LookAheadNot id (fst $ head $ results $ feedEof $ f $ feedEof p) p') p'
+   where p' = More (\x-> f (feed x p))
 
 results :: Parser s r -> [(r, [s] -> [s])]
 results (Result t r) = [(r, t)]
@@ -177,9 +178,9 @@ results (Choice p1@Result{} p2) = results p1 ++ results p2
 results _ = []
 
 hasResult :: Parser s r -> Bool
-hasResult (Result _ r) = True
+hasResult Result{} = True
 hasResult (ResultPart _ p) = hasResult p
-hasResult (Choice p1@Result{} _) = True
+hasResult (Choice Result{} _) = True
 hasResult (CommitedLeftChoice _ p) = hasResult p
 hasResult _ = False
 
@@ -197,6 +198,7 @@ partialResults p = collect p [(mempty, p)]
                                                                          r -> r ++ rest
          collect p rest = rest
 
+infixl 3 <<|>
 (<<|>) :: Parser s r -> Parser s r -> Parser s r
 Failure <<|> p = p
 p <<|> Failure = p
@@ -223,10 +225,10 @@ lookAheadInto t p = LookAhead t p
 
 lookAheadNotInto :: InputTail s -> r -> Parser s r' -> Parser s r
 lookAheadNotInto t r Failure = Result t r
-lookAheadNotInto _ _ Result{} = Failure
 lookAheadNotInto t r (ResultPart _ p) = lookAheadNotInto t r p
 lookAheadNotInto t r (LookAhead _ p) = lookAheadNotInto t r p
 lookAheadNotInto t r (LookAheadNot _ _ p) = lookAheadInto t (fmap (const r) p)
+lookAheadNotInto _ _ p | hasResult p = Failure
 lookAheadNotInto t r p = LookAheadNot t r (fmap (const r) p)
 
 resultPart :: (r -> r) -> Parser s r -> Parser s r
@@ -235,6 +237,7 @@ resultPart f (Result t r) = Result t (f r)
 resultPart f (ResultPart g p) = ResultPart (f . g) p
 resultPart f p = ResultPart f p
 
+infixl 5 ><
 (><) :: Monoid r => Parser s r -> Parser s r -> Parser s r
 Failure >< _ = Failure
 Result t r >< p = resultPart (mappend r) (feedAll (t []) p)
@@ -246,6 +249,7 @@ More f >< p = More (\x-> f x >< p)
    (feedEof p1 >< p2) <|> More (\x-> lookAheadNotInto id r (feed x p1) >< feedAll (t [x]) p2)
 p1 >< p2 = resolve (>< p2) p1
 
+infixl 5 >><
 (>><) :: Monoid r => Parser s r -> Parser s r -> Parser s r
 Failure >>< _ = Failure
 Result t r >>< p = resultPart (mappend r) (feedAll (t []) p)
@@ -284,6 +288,14 @@ eof = lookAheadNotInto id mempty anyToken
 anyToken :: Parser s s
 anyToken = More return
 
+-- | A parser that accepts a specific input item.
+token :: Eq s => s -> Parser s s
+token x = More (\y-> if x == y then return x else Failure)
+
+-- | A parser that accepts an input item only if it satisfies the given predicate.
+satisfy :: (s -> Bool) -> Parser s s
+satisfy pred = More (\x-> if pred x then return x else Failure)
+
 -- | A parser that accepts a given number of input items.
 count :: Int -> Parser s [s]
 count n | n > 0 = More (\x-> resultPart (x:) $ count (pred n))
@@ -310,6 +322,10 @@ while :: (x -> Bool) -> Parser x [x]
 while p = t
    where t = CommitedLeftChoice (More (\x-> if p x then resultPart (x:) t else Failure)) (return [])
 
+-- | A parser that accepts all input as long as it matches the given predicate, and fails if there isn't any.
+while1 :: (x -> Bool) -> Parser x [x]
+while1 p = More (\x-> if p x then resultPart (x:) (while p) else Failure)
+
 optional :: Monoid r => Parser s r -> Parser s r
 optional p = Choice p (return mempty)
 
@@ -320,10 +336,10 @@ skip :: Monoid r => Parser s r' -> Parser s r
 skip p = fmap (const mempty) p
 
 many0 :: Monoid r => Parser s r -> Parser s r
-many0 p = optional (many1 p)
+many0 p = many1 p <<|> return mempty
 
 many1 :: Monoid r => Parser s r -> Parser s r
-many1 p = p >>< many0 p
+many1 p = More (\x-> feed x p >>< many0 p)
 
 manyTill :: Monoid r => Parser s r -> Parser s r' -> Parser s r
 manyTill next end = t
