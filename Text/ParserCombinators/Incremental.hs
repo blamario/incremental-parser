@@ -68,7 +68,10 @@ feed x (LookAheadNot t np p) = lookAheadNotInto (t . (x:)) np (feed x p)
 feedEof :: Parser s r -> Parser s r
 feedEof Failure = Failure
 feedEof p@Result{} = p
-feedEof (ResultPart r p) = resultPart r (feedEof p)
+feedEof (ResultPart r p) = prepend r (feedEof p)
+   where prepend r (Result t r') = Result t (r r')
+         prepend r (Choice p1 p2) = Choice (prepend r p1) (prepend r p2)
+         prepend r Failure = Failure
 feedEof (Choice p1 p2) = feedEof p1 <|> feedEof p2
 feedEof (CommitedLeftChoice p1 p2) = feedEof p1 <<|> feedEof p2
 feedEof More{} = Failure
@@ -202,9 +205,9 @@ instance Monad (Parser s) where
    ResultPart r p1 >> p2 = p1 >> p2
    Choice p1a p1b >> p2 = (p1a >> p2) <|> (p1b >> p2)
    More f >> p = More (\x-> f x >> p)
-   (LookAhead t p1) >> p2 = (feedEof p1 >> p2) <|> More (\x-> LookAhead id (feed x p1) >> feedList (t [x]) p2)
-   (LookAheadNot t np p1) >> p2 =
-      (feedEof p1 >> p2) <|> More (\x-> LookAheadNot id np (feed x p1) >> feedList (t [x]) p2)
+   p1@(LookAhead t p) >> p2 = (feedEof p1 >> p2) <|> More (\x-> LookAhead id (feed x p) >> feedList (t [x]) p2)
+   p1@(LookAheadNot t np p) >> p2 =
+      (feedEof p1 >> p2) <|> More (\x-> LookAheadNot id np (feed x p) >> feedList (t [x]) p2)
    p1 >> p2 = resolve (>> p2) p1
 
 instance MonadPlus (Parser s) where
@@ -213,23 +216,23 @@ instance MonadPlus (Parser s) where
 
 instance (Monoid r, Show r, Show s) => Show (Parser s r) where
    show Failure = "Failure"
-   show (Result t r) = "(Result " ++ shows (t []) (" " ++ shows r ")")
+   show (Result t r) = "(Result (" ++ shows (t []) ("++) " ++ shows r ")")
    show (ResultPart f p) = "(ResultPart " ++ shows (f mempty) (" " ++ shows p ")")
    show (Choice p1 p2) = "(Choice " ++ shows p1 (" " ++ shows p2 ")")
    show (CommitedLeftChoice p1 p2) = "(CommitedLeftChoice " ++ shows p1 (" " ++ shows p2 ")")
-   show (More f) = "More"
-   show (LookAhead t p) = "(LookAhead " ++ shows (t []) (" " ++ shows p ")")
-   show (LookAheadNot t np p) = 
-      "(LookAheadNot " ++ shows (t []) (" " ++ shows np (" " ++ shows (fmap (const ()) p) ")"))
+   show (More f) = "(More $ \\x-> " ++ shows (f undefined) ")"
+   show (LookAhead t p) = "(LookAhead (" ++ shows (t []) ("++) " ++ shows p ")")
+   show (LookAheadNot t np p) =
+      "(LookAheadNot (" ++ shows (t []) ("++) " ++ shows np (" " ++ shows (fmap (const ()) p) ")"))
 
 instance Monoid r => Monoid (Parser s r) where
    mempty = return mempty
    mappend = (><)
 
 resolve :: (Parser s a -> Parser s b) -> Parser s a -> Parser s b
-resolve f p@CommitedLeftChoice{} = CommitedLeftChoice (More (\x-> f (feed x p))) (feedEof $ f $ feedEof p)
-resolve f p = Choice (LookAheadNot id (feedEof $ f $ feedEof p) p') p'
-   where p' = More (\x-> f (feed x p))
+resolve f p@CommitedLeftChoice{} = CommitedLeftChoice (More $ \x-> f (feed x p)) (feedEof $ f $ feedEof p)
+resolve f p = Choice (LookAheadNot id (feedEof p') (More $ const p')) (More $ \x-> f (feed x p))
+   where p'= f (feedEof p)
 
 pmap :: (Monoid a, Monoid b) => (a -> b) -> Parser s a -> Parser s b
 pmap f Failure = Failure
