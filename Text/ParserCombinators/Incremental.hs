@@ -52,9 +52,8 @@ data Parser s r = Failure
                 | Choice (Parser s r) (Parser s r)
                 | CommitedLeftChoice (Parser s r) (Parser s r)
                 | More (s -> Parser s r)
-                | LookAhead (Parser s r) (Parser s r -> Parser s r)
-                | forall r'. LookAheadIgnore (Parser s r') (Parser s r' -> Parser s r)
                 | forall r'. Apply (Parser s r' -> Parser s r) (Parser s r')
+                | forall r'. ApplyInput (InputTail s -> Parser s r' -> Parser s r) (Parser s r')
 
 type InputTail s = [s] -> [s]
 
@@ -65,9 +64,8 @@ feed x (ResultPart r p) = resultPart r (feed x p)
 feed x (Choice p1 p2) = feed x p1 <|> feed x p2
 feed x (CommitedLeftChoice p1 p2) = feed x p1 <<|> feed x p2
 feed x (More f) = f x
-feed x (LookAhead p c) = lookAheadInto (feed x p) (feed x . c)
-feed x (LookAheadIgnore p c) = lookAheadIgnore (feed x p) (feed x . c)
 feed x (Apply f p) = f (feed x p)
+feed x (ApplyInput f p) = f (x:) (feed x p)
 
 feedEof :: Parser s r -> Parser s r
 feedEof Failure = Failure
@@ -79,9 +77,8 @@ feedEof (ResultPart r p) = prepend r (feedEof p)
 feedEof (Choice p1 p2) = feedEof p1 <|> feedEof p2
 feedEof (CommitedLeftChoice p1 p2) = feedEof p1 <<|> feedEof p2
 feedEof More{} = Failure
-feedEof (LookAhead p c) = lookAheadInto (feedEof p) (feedEof . c)
-feedEof (LookAheadIgnore p c) = lookAheadIgnore (feedEof p) (feedEof . c)
 feedEof (Apply f p) = feedEof (f $ feedEof p)
+feedEof (ApplyInput f p) = feedEof (f id $ feedEof p)
 
 feedList :: [s] -> Parser s r -> Parser s r
 feedList s p = foldl (flip feed) p s
@@ -137,33 +134,26 @@ partialResults p = collect p [(mempty, p)]
          collect p rest = rest
 
 lookAhead :: Parser s r -> Parser s r
-lookAhead p = lookAheadInto p id
+lookAhead p = lookAheadInto id p
 
 lookAheadNot :: Monoid r => Parser s r' -> Parser s r
-lookAheadNot = lookAheadNotInto mempty
+lookAheadNot = lookAheadNotInto id
 
-lookAheadNotInto :: Parser s r -> Parser s r' -> Parser s r
-lookAheadNotInto p' p = lookAheadIgnore p c
-   where c Failure = p'
-         c _ = Failure
+lookAheadInto :: InputTail s -> Parser s r -> Parser s r
+lookAheadInto t Failure               = Failure
+lookAheadInto t (Result _ r)          = Result t r
+lookAheadInto t (ResultPart r p)      = resultPart r (lookAheadInto t p)
+lookAheadInto t (More f)              = More (\x-> lookAheadInto (t . (x:)) (f x))
+lookAheadInto t (Choice p1 p2)        = lookAheadInto t p1 <|> lookAheadInto t p2
+lookAheadInto t p                     = ApplyInput (\t' p'-> lookAheadInto (t . t') p') p
 
-lookAheadInto :: Parser s r -> (Parser s r -> Parser s r) -> Parser s r
-lookAheadInto Failure c                = Failure
-lookAheadInto (Result _ r) c           = c (Result id r)
-lookAheadInto (ResultPart r p) c       = resultPart r (lookAheadInto p c)
-lookAheadInto (LookAhead p c') c       = LookAhead p (c . c')
-lookAheadInto (LookAheadIgnore p c') c = LookAheadIgnore p (c . c')
-lookAheadInto (Choice p1 p2) c         = lookAheadInto p1 c <|> lookAheadInto p2 c
-lookAheadInto p c                      = LookAhead p c
-
-lookAheadIgnore :: Parser s r' -> (Parser s r' -> Parser s r) -> Parser s r
-lookAheadIgnore Failure c                = c Failure
-lookAheadIgnore p@Result{} c             = c p
-lookAheadIgnore (ResultPart r p) c       = lookAheadIgnore p c
-lookAheadIgnore (LookAhead p c') c       = LookAheadIgnore p (c . c')
-lookAheadIgnore (LookAheadIgnore p c') c = LookAheadIgnore p (c . c')
-lookAheadIgnore (Choice p1 p2) c         = lookAheadIgnore p1 c <|> lookAheadIgnore p2 c
-lookAheadIgnore p c                      = LookAheadIgnore p c
+lookAheadNotInto :: Monoid r => InputTail s -> Parser s r' -> Parser s r
+lookAheadNotInto t Failure               = Result t mempty
+lookAheadNotInto t (Result _ r)          = Failure
+lookAheadNotInto t (Choice (Result _ r) _) = Failure
+lookAheadNotInto t (ResultPart r p)      = lookAheadNotInto t p
+lookAheadNotInto t (More f)              = More (\x-> lookAheadNotInto (t . (x:)) (f x))
+lookAheadNotInto t p                     = ApplyInput (\t' p'-> lookAheadNotInto (t . t') p') p
 
 resultPart :: (r -> r) -> Parser s r -> Parser s r
 resultPart _ Failure = Failure
@@ -178,7 +168,6 @@ instance Functor (Parser s) where
    fmap f (Choice p1 p2) = fmap f p1 <|> fmap f p2
    fmap f (CommitedLeftChoice p1 p2) = fmap f p1 <<|> fmap f p2
    fmap f (More g) = More (fmap f . g)
-   fmap f (LookAheadIgnore p c) = LookAheadIgnore p (fmap f . c)
    fmap f p = Apply (fmap f) p
 
 instance Applicative (Parser s) where
@@ -216,8 +205,6 @@ instance Monad (Parser s) where
    ResultPart r p1 >> p2 = p1 >> p2
    Choice p1a p1b >> p2 = (p1a >> p2) <|> (p1b >> p2)
    More f >> p = More (\x-> f x >> p)
-   LookAhead p1 c >> p2 = LookAheadIgnore p1 ((>> p2) . c)
-   LookAheadIgnore p1 c >> p2 = LookAheadIgnore p1 ((>> p2) . c)
    p1 >> p2 = Apply (>> p2) p1
 
 instance MonadPlus (Parser s) where
@@ -238,10 +225,8 @@ showWith sm sr (ResultPart f p) = "(ResultPart (mappend " ++ sr (f mempty) ++ ")
 showWith sm sr (Choice p1 p2) = "(Choice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
 showWith sm sr (CommitedLeftChoice p1 p2) = "(CommitedLeftChoice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
 showWith sm sr (More f) = "(More $ " ++ sm f ++ ")"
-showWith sm sr (LookAhead p c) = "(LookAhead " ++ showWith sm sr p ++ " (>< " ++ showWith sm sr (c $ feedEof p) ++ "))"
-showWith sm sr (LookAheadIgnore p c) = 
-   "(LookAheadIgnore " ++ showWith sm sr (fmap (const mempty) p) ++ " (const " ++ showWith sm sr (c $ feedEof p) ++ "))"
-showWith sm sr (Apply f p) = "(Apply id " ++ showWith sm sr (fmap (const mempty) p) ++ ")"
+showWith sm sr (Apply f p) = "Apply"
+showWith sm sr (ApplyInput f p) = "ApplyInput"
 
 pmap :: (Monoid a, Monoid b) => (a -> b) -> Parser s a -> Parser s b
 pmap f Failure = Failure
@@ -250,12 +235,6 @@ pmap f (ResultPart r p) = ResultPart (f (r mempty) `mappend`) (pmap f p)
 pmap f (Choice p1 p2) = pmap f p1 <|> pmap f p2
 pmap f (CommitedLeftChoice p1 p2) = pmap f p1 <<|> pmap f p2
 pmap f (More g) = More (pmap f . g)
-pmap f (LookAhead p c) = lookAheadInto (pmap f p) (mapThrough c)
-   where mapThrough _ Failure = pmap f (c Failure)
-         mapThrough c (Result t r) = case c (Result t mempty)
-                                     of Failure -> Failure
-                                        Result t' r' -> Result t' (r `mappend` f r')
-pmap f (LookAheadIgnore p c) = LookAheadIgnore p (pmap f . c)
 pmap f p = Apply (pmap f) p
 
 infixl 3 <<|>
@@ -275,8 +254,6 @@ Result t r >< p = resultPart (mappend r) (feedList (t []) p)
 ResultPart r p1 >< p2 = resultPart r (p1 >< p2)
 Choice p1a p1b >< p2 = (p1a >< p2) <|> (p1b >< p2)
 More f >< p = More (\x-> f x >< p)
-LookAhead p1 c >< p2 = LookAhead p1 ((>< p2) . c)
-LookAheadIgnore p1 c >< p2 = LookAheadIgnore p1 ((>< p2) . c)
 p1 >< p2 = Apply (>< p2) p1
 
 infixl 5 >><
@@ -290,8 +267,6 @@ p1@CommitedLeftChoice{} >>< p2 =
       (More (\x-> (feed x p1 >>< p2) <<|> (feedEof p1 >>< feed x p2))) 
       (feedEof p1 >>< feedEof p2)
 More f >>< p = More (\x-> f x >>< p)
-LookAhead p1 c >>< p2 = LookAhead p1 ((>>< p2) . c)
-LookAheadIgnore p1 c >>< p2 = LookAheadIgnore p1 ((>>< p2) . c)
 p1 >>< p2 = Apply (>>< p2) p1
 
 longest :: Parser s r -> Parser s r
@@ -299,8 +274,6 @@ longest Failure = Failure
 longest p@Result{} = p
 longest (ResultPart r p) = resultPart r (longest p)
 longest (More f) = More (longest . f)
-longest (Choice p1 p2@LookAhead{}) = p1 <<|> p2
-longest (Choice p1@LookAhead{} p2) = p2 <<|> p1
 longest (Choice p1 p2@Result{}) = p1 <<|> p2
 longest (Choice p1@Result{} p2) = p2 <<|> p1
 longest p = More (\x-> longest $ feed x p) <<|> longest (feedEof p)
@@ -312,7 +285,7 @@ duplicate p = CommitedLeftChoice (More $ \x-> duplicate (feed x p)) (return p)
 
 -- | A parser that fails on any input.
 eof :: Monoid r => Parser s r
-eof = lookAheadNotInto (pure mempty) anyToken
+eof = lookAheadNot anyToken
 
 -- | A parser that accepts a single input item.
 anyToken :: Parser s s
@@ -399,6 +372,4 @@ Result t r `andThen` p = resultPart (mappend (r, mempty)) (feedList (t []) (fmap
 ResultPart f p1 `andThen` p2 = resultPart (\(r1, r2)-> (f r1, r2)) (p1 `andThen` p2)
 Choice p1a p1b `andThen` p2 = (p1a `andThen` p2) <|> (p1b `andThen` p2)
 More f `andThen` p = More (\x-> f x `andThen` p)
-LookAhead p1 c `andThen` p2 = LookAhead (p1 `andThen` mempty) ((`andThen` p2) . c . fmap fst)
-LookAheadIgnore p1 c `andThen` p2 = LookAheadIgnore p1 ((`andThen` p2) . c)
 p1 `andThen` p2 = Apply (`andThen` p2) p1
