@@ -31,7 +31,7 @@ module Text.ParserCombinators.Incremental
     empty, eof, anyToken, token, satisfy, count, acceptAll, string, prefixOf, whilePrefixOf, while, while1,
     skip, optional, optionMaybe, many, many0, many1, manyTill,
     -- * Parser combinators
-    pmap, (><), (>><), (<<|>), lookAhead, lookAheadNot, longest, and, andThen,
+    pmap, (><), (>><), (<<|>), lookAhead, lookAheadNot, and, andThen,
     -- * Utilities
     showWith
    )
@@ -267,17 +267,6 @@ p1@CommitedLeftChoice{} >>< p2 =
       (feedEof p1 >>< feedEof p2)
 More f >>< p = More (\x-> f x >>< p)
 p1 >>< p2 = Apply (>>< p2) p1
-
-longest :: Parser s r -> Parser s r
-longest Failure = Failure
-longest p@Result{} = p
-longest (ResultPart r p) = resultPart r (longest p)
-longest (More f) = More (longest . f)
-longest (Choice p1@Result{} p2) = longer p1 p2
-   where longer p1 p2@Result{} = p1 <|> p2
-         longer p1 (Choice p2a@Result{} p2b) = longer (p1 <|> p2a) p2b
-         longer p1 p2 = longest p2 <<|> p1
-longest p = More (\x-> longest $ feed x p) <<|> longest (feedEof p)
 
 duplicate :: Parser s r -> Parser s (Parser s r)
 duplicate Failure = Failure
