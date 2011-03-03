@@ -152,7 +152,6 @@ lookAheadNotInto t Failure               = Result t mempty
 lookAheadNotInto t (Result _ r)          = Failure
 lookAheadNotInto t (Choice (Result _ r) _) = Failure
 lookAheadNotInto t (ResultPart r p)      = lookAheadNotInto t p
-lookAheadNotInto t (More f)              = More (\x-> lookAheadNotInto (t . (x:)) (f x))
 lookAheadNotInto t p                     = ApplyInput (\t' p'-> lookAheadNotInto (t . t') p') p
 
 resultPart :: (r -> r) -> Parser s r -> Parser s r
@@ -274,8 +273,10 @@ longest Failure = Failure
 longest p@Result{} = p
 longest (ResultPart r p) = resultPart r (longest p)
 longest (More f) = More (longest . f)
-longest (Choice p1 p2@Result{}) = p1 <<|> p2
-longest (Choice p1@Result{} p2) = p2 <<|> p1
+longest (Choice p1@Result{} p2) = longer p1 p2
+   where longer p1 p2@Result{} = p1 <|> p2
+         longer p1 (Choice p2a@Result{} p2b) = longer (p1 <|> p2a) p2b
+         longer p1 p2 = longest p2 <<|> p1
 longest p = More (\x-> longest $ feed x p) <<|> longest (feedEof p)
 
 duplicate :: Parser s r -> Parser s (Parser s r)
