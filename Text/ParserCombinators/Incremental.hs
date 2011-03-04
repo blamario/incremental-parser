@@ -26,12 +26,12 @@ module Text.ParserCombinators.Incremental
     -- * The Parser type
     Parser, 
     -- * Using a Parser
-    feed, feedEof, feedAll, feedListPrefix, feedLongestPrefix, feedShortestPrefix, results, resultPrefix,
+    feed, feedEof, feedAll, feedListPrefix, feedShortestPrefix, results, resultPrefix,
     -- * Parser primitives
     empty, eof, anyToken, token, satisfy, count, acceptAll, string, prefixOf, whilePrefixOf, while, while1,
     skip, optional, optionMaybe, many, many0, many1, manyTill,
     -- * Parser combinators
-    pmap, (><), (>><), (<<|>), lookAhead, lookAheadNot, and, andThen,
+    pmap, (><), (<<|>), lookAhead, lookAheadNot, and, andThen,
     -- * Utilities
     showWith
    )
@@ -94,11 +94,6 @@ feedShortestPrefix s p = case foldl feedOrStore (Nothing, p) s
          feedOrStore (Nothing, p) x = if null (results p) then (Nothing, feed x p) else (Just (x :), p)
          feedOrStore (Just store, p) x = (Just (store . (x :)), p)
 
-feedLongestPrefix :: (Foldable f, Monoid r) => f s -> Parser s r -> (Parser s r, [s])
-feedLongestPrefix s p = case feedEof $ feedAll s $ duplicate p
-                        of Failure -> (Failure, toList s)
-                           Result t r -> (r, t [])
-
 feedListPrefix :: [s] -> [s] -> Parser s r -> (Parser s r, [s])
 feedListPrefix whole chunk p = feedRest chunk p
    where feedRest rest (Result t r) = (Result id r, t rest)
@@ -124,14 +119,6 @@ resultPrefix (Result t r) = (Just r, Result t mempty)
 resultPrefix (ResultPart f p) = (Just (f $ fromMaybe mempty r), p')
    where (r, p') = resultPrefix p
 resultPrefix p = (Nothing, p)
-
-partialResults :: Monoid r => Parser s r -> [(r, Parser s r)]
-partialResults p = collect p [(mempty, p)]
-   where collect (ResultPart f p) rest = [(f r, p') | (r, p') <- partialResults p] ++ rest
-         collect (Choice p1 p2) rest = collect p1 (collect p2 rest)
-         collect (CommitedLeftChoice p1 p2) rest = case collect p1 [] of [] -> collect p2 rest
-                                                                         r -> r ++ rest
-         collect p rest = rest
 
 lookAhead :: Parser s r -> Parser s r
 lookAhead p = lookAheadInto id p
@@ -241,8 +228,6 @@ infixl 3 <<|>
 Failure <<|> p = p
 p <<|> Failure = p
 p <<|> _ | hasResult p = p
-CommitedLeftChoice p1a p1b <<|> p2 = CommitedLeftChoice p1a (p1b <<|> p2)
-ResultPart r (CommitedLeftChoice p1a p1b) <<|> p2 = CommitedLeftChoice (resultPart r p1a) (resultPart r p1b <<|> p2)
 More f <<|> More g = More (\x-> f x <<|> g x)
 p1 <<|> p2 = CommitedLeftChoice p1 p2
 
@@ -254,24 +239,6 @@ ResultPart r p1 >< p2 = resultPart r (p1 >< p2)
 Choice p1a p1b >< p2 = (p1a >< p2) <|> (p1b >< p2)
 More f >< p = More (\x-> f x >< p)
 p1 >< p2 = Apply (>< p2) p1
-
-infixl 5 >><
-(>><) :: Monoid r => Parser s r -> Parser s r -> Parser s r
-Failure >>< _ = Failure
-Result t r >>< p = resultPart (mappend r) (feedList (t []) p)
-ResultPart r p1 >>< p2 = resultPart r (p1 >>< p2)
-Choice p1a p1b >>< p2 = (p1a >>< p2) <|> (p1b >>< p2)
-p1@CommitedLeftChoice{} >>< p2 = 
-   CommitedLeftChoice
-      (More (\x-> (feed x p1 >>< p2) <<|> (feedEof p1 >>< feed x p2))) 
-      (feedEof p1 >>< feedEof p2)
-More f >>< p = More (\x-> f x >>< p)
-p1 >>< p2 = Apply (>>< p2) p1
-
-duplicate :: Parser s r -> Parser s (Parser s r)
-duplicate Failure = Failure
-duplicate p@Result{} = Result id p
-duplicate p = CommitedLeftChoice (More $ \x-> duplicate (feed x p)) (return p)
 
 -- | A parser that fails on any input.
 eof :: Monoid r => Parser s r
@@ -332,11 +299,11 @@ many0 :: Monoid r => Parser s r -> Parser s r
 many0 p = many1 p <<|> return mempty
 
 many1 :: Monoid r => Parser s r -> Parser s r
-many1 p = More (\x-> feed x p >>< many0 p)
+many1 p = More (\x-> feed x p >< many0 p)
 
 manyTill :: Monoid r => Parser s r -> Parser s r' -> Parser s r
 manyTill next end = t
-   where t = skip end <<|> (next >>< t)
+   where t = skip end <<|> (next >< t)
 
 -- | A parser that accepts all input.
 acceptAll :: Parser s [s]
