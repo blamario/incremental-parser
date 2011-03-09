@@ -27,7 +27,7 @@ module Text.ParserCombinators.Incremental (
    -- * Using a Parser
    feed, feedEof, feedListPrefix, results, resultPrefix,
    -- * Parser primitives
-   empty, eof, anyToken, token, satisfy, count, acceptAll, string, prefixOf, whilePrefixOf, while, while1,
+   empty, eof, anyToken, token, satisfy, count, acceptAll, prefix, string, while, while1,
    skip, optional, optionMaybe, many, many0, many1, manyTill,
    -- * Parser combinators
    pmap, (><), (<<|>), lookAhead, lookAheadNot, and, andThen,
@@ -242,11 +242,10 @@ token x = satisfy (== x)
 satisfy :: Eq x => (x -> Bool) -> Parser [x] x
 satisfy pred = More (\(x:rest)-> if pred x then Result rest x else Failure)
 
--- | A parser that accepts a given number of input items.
-count :: Int -> Parser [x] [x]
-count n | n > 0 = More (\l-> case splitAt n l of (l', []) -> resultPart (mappend l') $ count (n - length l)
-                                                 (l', rest) -> Result rest l')
-        | otherwise = return []
+-- | A parser that accepts a given number of occurrences of the argument parser.
+count :: (MonoidNull s, Monoid r) => Int -> Parser s r -> Parser s r
+count n p | n > 0 = p >< count (pred n) p
+          | otherwise = mempty
 
 string :: (LeftCancellativeMonoid s, MonoidNull s) => s -> Parser s s
 string x | mnull x = mempty
@@ -255,27 +254,35 @@ string x = More (\y-> case (mstripPrefix x y, mstripPrefix y x)
                          (Nothing, Nothing) -> Failure
                          (Nothing, Just x') -> string x' >> return x)
 
--- | A parser that accepts the longest prefix of input that matches a prefix of the argument list.
-prefixOf :: Eq x => [x] -> Parser [x] [x]
-prefixOf list = whilePrefixOf (map (==) list)
+prefix :: (LeftCancellativeMonoid s, MonoidNull s) => (s -> s) -> Parser s s
+prefix f = CommitedLeftChoice (More consume) mempty
+   where consume s = case mstripPrefix p s
+                     of Nothing -> Failure
+                        Just rest | mnull rest -> ResultPart (mappend p) (prefix f)
+                                  | otherwise -> Result rest p
+            where p = f s
 
--- | A parser that accepts a prefix of input as long as each item satisfies the predicate at the same position in the
--- argument list. The length of the predicate list thus determines the maximum number of acepted values.
-whilePrefixOf :: [x -> Bool] -> Parser [x] [x]
-whilePrefixOf (p : rest) = 
-   CommitedLeftChoice
-      (More $ \(x:xs)-> if p x then resultPart (x:) (feed xs (whilePrefixOf rest)) else Failure)
-      (return [])
-whilePrefixOf [] = return []
+prefix1 :: (LeftCancellativeMonoid s, MonoidNull s) => (s -> Maybe s) -> Parser s s
+prefix1 f = More (maybe Failure id . try)
+   where try s = do p <- f s
+                    rest <- mstripPrefix p s 
+                    return (if mnull rest then ResultPart (mappend p) (prefix1 f) else Result rest p)
+
+unsafePrefix :: MonoidNull s => (s -> (s, s)) -> Parser s s
+unsafePrefix f = CommitedLeftChoice (More (consume . f)) mempty
+   where consume (p, rest) = if mnull rest
+                             then ResultPart (mappend p) (unsafePrefix f)
+                             else Result rest p
+
+unsafePrefix1 :: MonoidNull s => (s -> Maybe (s, s)) -> Parser s s
+unsafePrefix1 f = More (maybe Failure success . f)
+   where success (p, rest) = if mnull rest
+                             then ResultPart (mappend p) (unsafePrefix1 f)
+                             else Result rest p
 
 -- | A parser that accepts all input as long as it matches the given predicate.
 while :: (x -> Bool) -> Parser [x] [x]
-while p = t
-   where t = CommitedLeftChoice (More (\l-> case span p l
-                                            of ([], _) -> Failure
-                                               (r, []) -> resultPart (mappend r) t
-                                               (r, rest) -> Result rest r))
-                                (return [])
+while p = unsafePrefix (span p)
 
 -- | A parser that accepts all input as long as it matches the given predicate, and fails if there isn't any.
 while1 :: (x -> Bool) -> Parser [x] [x]
@@ -288,13 +295,13 @@ optionMaybe :: MonoidNull s => Parser s r -> Parser s (Maybe r)
 optionMaybe p = fmap Just p <<|> return Nothing
 
 skip :: (MonoidNull s, Monoid r) => Parser s r' -> Parser s r
-skip p = fmap (const mempty) p
+skip p = p >> mempty
 
 many0 :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r
 many0 p = many1 p <<|> return mempty
 
 many1 :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r
-many1 p = More (\x-> feed x p >< many0 p)
+many1 p = More (\s-> feed s p >< many0 p)
 
 manyTill :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r' -> Parser s r
 manyTill next end = t
