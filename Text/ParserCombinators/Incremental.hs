@@ -25,10 +25,10 @@ module Text.ParserCombinators.Incremental (
    -- * The Parser type
    Parser,
    -- * Using a Parser
-   feed, feedEof, feedListPrefix, results, resultPrefix,
+   feed, feedEof, completeResults, resultPrefix, results,
    -- * Parser primitives
    empty, eof, anyToken, token, satisfy, count, acceptAll, prefix, string, while, while1,
-   skip, optional, optionMaybe, many, many0, many1, manyTill,
+   skip, option, many, many0, many1, manyTill,
    -- * Parser combinators
    pmap, (><), (<<|>), lookAhead, lookAheadNot, and, andThen,
    -- * Utilities
@@ -79,19 +79,26 @@ feedEof More{} = Failure
 feedEof (Apply f p) = feedEof (f $ feedEof p)
 feedEof (ApplyInput f p) = feedEof (f mempty $ feedEof p)
 
-feedListPrefix :: [s] -> [s] -> Parser [s] r -> (Parser [s] r, [s])
-feedListPrefix whole chunk p = feedRest chunk p
-   where feedRest [] (Result t r) = (Result mempty r, t)
-         feedRest rest (Result t r) = (Result mempty r, mappend t rest)
-         feedRest _ Failure = (Failure, whole)
-         feedRest [] p = (p, [])
-         feedRest l p = feedRest [] (feed l p)
+results :: Monoid r => Parser s r -> ([(r, s)], Maybe (r, Parser s r))
+results Failure = ([], Nothing)
+results (Result t r) = ([(r, t)], Nothing)
+results (ResultPart f p) = (map prepend results', fmap prepend rest)
+   where (results', rest) = results p
+         prepend (x, y) = (f x, y)
+results (Choice p1@Result{} p2) = (results1 ++ results2, combine rest1 rest2)
+   where (results1, rest1) = results p1
+         (results2, rest2) = results p2
+         combine Nothing rest2 = rest2
+         combine rest1 Nothing = rest1
+         combine (Just (r1, p1)) (Just (r2, p2)) = 
+            Just (mempty, Choice (ResultPart (mappend r1) p1) (ResultPart (mappend r2) p2))
+results p = ([], Just (mempty, p))
 
-results :: Parser s r -> [(r, s)]
-results (Result t r) = [(r, t)]
-results (ResultPart f p) = map (\(r, t)-> (f r, t)) (results p)
-results (Choice p1@Result{} p2) = results p1 ++ results p2
-results _ = []
+completeResults :: Parser s r -> [(r, s)]
+completeResults (Result t r) = [(r, t)]
+completeResults (ResultPart f p) = map (\(r, t)-> (f r, t)) (completeResults p)
+completeResults (Choice p1@Result{} p2) = completeResults p1 ++ completeResults p2
+completeResults _ = []
 
 hasResult :: Parser s r -> Bool
 hasResult Result{} = True
@@ -100,11 +107,11 @@ hasResult (Choice Result{} _) = True
 hasResult (CommitedLeftChoice _ p) = hasResult p
 hasResult _ = False
 
-resultPrefix :: Monoid r => Parser s r -> (Maybe r, Parser s r)
-resultPrefix (Result t r) = (Just r, Result t mempty)
-resultPrefix (ResultPart f p) = (Just (f $ fromMaybe mempty r), p')
+resultPrefix :: Monoid r => Parser s r -> (r, Parser s r)
+resultPrefix (Result t r) = (r, Result t mempty)
+resultPrefix (ResultPart f p) = (f r, p')
    where (r, p') = resultPrefix p
-resultPrefix p = (Nothing, p)
+resultPrefix p = (mempty, p)
 
 lookAhead :: MonoidNull s => Parser s r -> Parser s r
 lookAhead p = lookAheadInto mempty p
@@ -254,6 +261,23 @@ string x = More (\y-> case (mstripPrefix x y, mstripPrefix y x)
                          (Nothing, Nothing) -> Failure
                          (Nothing, Just x') -> string x' >> return x)
 
+newtype Consumer s = Consumer {consumeChunk :: s -> ConsumptionResult s}
+
+data ConsumptionResult s = FailedConsumption
+                         | ContinueConsumption (Consumer s)
+                         | ConsumedPrefix s
+
+consumed :: (LeftCancellativeMonoid s, MonoidNull s) => Consumer s -> Parser s s
+consumed c = consumed1 c <<|> mempty
+
+consumed1 :: (LeftCancellativeMonoid s, MonoidNull s) => Consumer s -> Parser s s
+consumed1 c = More consume
+   where consume s = case consumeChunk c s
+                     of ContinueConsumption c' -> ResultPart (mappend s) (consumed c')
+                        ConsumedPrefix p -> case mstripPrefix p s of Just rest -> Result rest p
+                                                                     Nothing -> Failure
+                        FailedConsumption -> Failure
+
 prefix :: (LeftCancellativeMonoid s, MonoidNull s) => (s -> s) -> Parser s s
 prefix f = CommitedLeftChoice (More consume) mempty
    where consume s = case mstripPrefix p s
@@ -288,11 +312,8 @@ while p = unsafePrefix (span p)
 while1 :: (x -> Bool) -> Parser [x] [x]
 while1 p = More (\(x:rest)-> if p x then resultPart (x:) (feed rest $ while p) else Failure)
 
-optional :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r
-optional p = p <|> return mempty
-
-optionMaybe :: MonoidNull s => Parser s r -> Parser s (Maybe r)
-optionMaybe p = fmap Just p <<|> return Nothing
+option :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r
+option p = p <|> return mempty
 
 skip :: (MonoidNull s, Monoid r) => Parser s r' -> Parser s r
 skip p = p >> mempty
