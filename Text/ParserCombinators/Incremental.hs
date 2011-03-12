@@ -58,17 +58,17 @@ data Parser s r = Failure
                 | forall r'. Apply (Parser s r' -> Parser s r) (Parser s r')
                 | forall r'. ApplyInput (s -> Parser s r' -> Parser s r) (Parser s r')
 
-feed :: MonoidNull s => s -> Parser s r -> Parser s r
+feed :: Monoid s => s -> Parser s r -> Parser s r
 feed _ Failure = Failure
 feed s (Result t r) = Result (mappend t s) r
 feed s (ResultPart r p) = resultPart r (feed s p)
 feed s (Choice p1 p2) = feed s p1 <|> feed s p2
 feed s (CommitedLeftChoice p1 p2) = feed s p1 <<|> feed s p2
-feed s p@(More f) = if mnull s then p else f s
+feed s p@(More f) = f s
 feed s (Apply f p) = f (feed s p)
 feed s (ApplyInput f p) = f s (feed s p)
 
-feedEof :: MonoidNull s => Parser s r -> Parser s r
+feedEof :: Monoid s => Parser s r -> Parser s r
 feedEof Failure = Failure
 feedEof p@Result{} = p
 feedEof (ResultPart r p) = prepend r (feedEof p)
@@ -115,13 +115,13 @@ resultPrefix (ResultPart f p) = (f r, p')
    where (r, p') = resultPrefix p
 resultPrefix p = (mempty, p)
 
-lookAhead :: MonoidNull s => Parser s r -> Parser s r
+lookAhead :: Monoid s => Parser s r -> Parser s r
 lookAhead p = lookAheadInto mempty p
 
-lookAheadNot :: (MonoidNull s, Monoid r) => Parser s r' -> Parser s r
+lookAheadNot :: (Monoid s, Monoid r) => Parser s r' -> Parser s r
 lookAheadNot = lookAheadNotInto mempty
 
-lookAheadInto :: MonoidNull s => s -> Parser s r -> Parser s r
+lookAheadInto :: Monoid s => s -> Parser s r -> Parser s r
 lookAheadInto t Failure               = Failure
 lookAheadInto t (Result _ r)          = Result t r
 lookAheadInto t (ResultPart r p)      = resultPart r (lookAheadInto t p)
@@ -129,7 +129,7 @@ lookAheadInto t (More f)              = More (\s-> lookAheadInto (mappend t s) (
 lookAheadInto t (Choice p1 p2)        = lookAheadInto t p1 <|> lookAheadInto t p2
 lookAheadInto t p                     = ApplyInput (\t' p'-> lookAheadInto (mappend t t') p') p
 
-lookAheadNotInto :: (MonoidNull s, Monoid r) => s -> Parser s r' -> Parser s r
+lookAheadNotInto :: (Monoid s, Monoid r) => s -> Parser s r' -> Parser s r
 lookAheadNotInto t Failure               = Result t mempty
 lookAheadNotInto t (Result _ r)          = Failure
 lookAheadNotInto t (Choice (Result _ r) _) = Failure
@@ -143,7 +143,7 @@ resultPart f (Choice (Result t r) p) = Choice (Result t (f r)) (resultPart f p)
 resultPart f (ResultPart g p) = ResultPart (f . g) p
 resultPart f p = ResultPart f p
 
-instance MonoidNull s => Functor (Parser s) where
+instance Monoid s => Functor (Parser s) where
    fmap f Failure = Failure
    fmap f (Result t r) = Result t (f r)
    fmap f (Choice p1 p2) = fmap f p1 <|> fmap f p2
@@ -151,7 +151,7 @@ instance MonoidNull s => Functor (Parser s) where
    fmap f (More g) = More (fmap f . g)
    fmap f p = Apply (fmap f) p
 
-instance MonoidNull s => Applicative (Parser s) where
+instance Monoid s => Applicative (Parser s) where
    pure = Result mempty
    Failure <*> _ = Failure
    Result t f <*> p = fmap f (feed t p)
@@ -159,7 +159,7 @@ instance MonoidNull s => Applicative (Parser s) where
    More f <*> p = More (\x-> f x <*> p)
    p1 <*> p2 = Apply (<*> p2) p1
 
-instance MonoidNull s => Alternative (Parser s) where
+instance Monoid s => Alternative (Parser s) where
    -- | A parser that succeeds without consuming any input.
    empty = Failure
    
@@ -172,7 +172,7 @@ instance MonoidNull s => Alternative (Parser s) where
    p1 <|> Choice p2a@Result{} p2b = Choice p2a (p1 <|> p2b)
    p1 <|> p2 = Choice p1 p2
 
-instance MonoidNull s => Monad (Parser s) where
+instance Monoid s => Monad (Parser s) where
    return = Result mempty
 
    Failure >>= _ = Failure
@@ -188,18 +188,18 @@ instance MonoidNull s => Monad (Parser s) where
    More f >> p = More (\x-> f x >> p)
    p1 >> p2 = Apply (>> p2) p1
 
-instance MonoidNull s => MonadPlus (Parser s) where
+instance Monoid s => MonadPlus (Parser s) where
    mzero = Failure
    mplus = (<<|>)
 
-instance (MonoidNull s, Monoid r) => Monoid (Parser s r) where
+instance (Monoid s, Monoid r) => Monoid (Parser s r) where
    mempty = return mempty
    mappend = (><)
 
--- instance (MonoidNull s, Monoid r, Show s, Show r) => Show (Parser s r) where
+-- instance (Monoid s, Monoid r, Show s, Show r) => Show (Parser s r) where
 --    show = showWith (show . ($ mempty)) show
 
-showWith :: (MonoidNull s, Monoid r, Show s) => ((s -> Parser s r) -> String) -> (r -> String) -> Parser s r -> String
+showWith :: (Monoid s, Monoid r, Show s) => ((s -> Parser s r) -> String) -> (r -> String) -> Parser s r -> String
 showWith sm sr Failure = "Failure"
 showWith sm sr (Result t r) = "(Result (" ++ shows t ("++) " ++ sr r ++ ")")
 showWith sm sr (ResultPart f p) = "(ResultPart (mappend " ++ sr (f mempty) ++ ") " ++ showWith sm sr p ++ ")"
@@ -209,7 +209,7 @@ showWith sm sr (More f) = "(More $ " ++ sm f ++ ")"
 showWith sm sr (Apply f p) = "Apply"
 showWith sm sr (ApplyInput f p) = "ApplyInput"
 
-mapIncremental :: (MonoidNull s, Monoid a, Monoid b) => (a -> b) -> Parser s a -> Parser s b
+mapIncremental :: (Monoid s, Monoid a, Monoid b) => (a -> b) -> Parser s a -> Parser s b
 mapIncremental f Failure = Failure
 mapIncremental f (Result t r) = Result t (f r)
 mapIncremental f (ResultPart r p) = ResultPart (f (r mempty) `mappend`) (mapIncremental f p)
@@ -227,7 +227,7 @@ More f <<|> More g = More (\x-> f x <<|> g x)
 p1 <<|> p2 = CommitedLeftChoice p1 p2
 
 infixl 5 ><
-(><) :: forall s r. (MonoidNull s, Monoid r) => Parser s r -> Parser s r -> Parser s r
+(><) :: forall s r. (Monoid s, Monoid r) => Parser s r -> Parser s r -> Parser s r
 Failure >< _ = Failure
 Result t r >< p = resultPart (mappend r) (feed t p)
 ResultPart r p1 >< p2 = resultPart r (p1 >< p2)
@@ -236,23 +236,29 @@ More f >< p = More (\x-> f x >< p)
 p1 >< p2 = Apply (>< p2) p1
 
 -- | A parser that fails on any input.
-eof :: (MonoidNull s, Monoid r) => Parser s r
+eof :: (Monoid s, Monoid r) => Parser s r
 eof = lookAheadNot (More return)
 
 -- | A parser that accepts a single input item.
 anyToken :: Parser [x] x
-anyToken = More (\(x:rest)-> Result rest x)
+anyToken = More f
+   where p = More f
+         f (x:rest) = Result rest x
+         f [] = p
 
 -- | A parser that accepts a specific input item.
 token :: Eq x => x -> Parser [x] x
 token x = satisfy (== x)
 
 -- | A parser that accepts an input item only if it satisfies the given predicate.
-satisfy :: Eq x => (x -> Bool) -> Parser [x] x
-satisfy pred = More (\(x:rest)-> if pred x then Result rest x else Failure)
+satisfy :: (x -> Bool) -> Parser [x] x
+satisfy pred = p
+   where p = More f
+         f (x:rest) = if pred x then Result rest x else Failure
+         f [] = p
 
 -- | A parser that accepts a given number of occurrences of the argument parser.
-count :: (MonoidNull s, Monoid r) => Int -> Parser s r -> Parser s r
+count :: (Monoid s, Monoid r) => Int -> Parser s r -> Parser s r
 count n p | n > 0 = p >< count (pred n) p
           | otherwise = mempty
 
@@ -270,24 +276,26 @@ data ConsumptionResult s = FailedConsumption
                          | ConsumedPrefix s
                          | UnsafeSplitConsumed s s
 
-consumed :: LeftCancellativeMonoid s => Consumer s -> Parser s s
+consumed :: (LeftCancellativeMonoid s, MonoidNull s) => Consumer s -> Parser s s
 consumed c = CommitedLeftChoice (consumed1 c) (Result mempty mempty)
 
-consumed1 :: LeftCancellativeMonoid s => Consumer s -> Parser s s
+consumed1 :: (LeftCancellativeMonoid s, MonoidNull s) => Consumer s -> Parser s s
 consumed1 c = More consume
-   where consume s = case c s
+   where consume s | mnull s = More consume
+         consume s = case c s
                      of ContinueConsumption c' -> ResultPart (mappend s) (consumed c')
                         ConsumedPrefix p -> case mstripPrefix p s of Just rest -> Result rest p
                                                                      Nothing -> Failure
                         UnsafeSplitConsumed p rest -> Result rest p
                         FailedConsumption -> Failure
 
-unsafeConsumed :: Monoid s => Consumer s -> Parser s s
+unsafeConsumed :: MonoidNull s => Consumer s -> Parser s s
 unsafeConsumed c = CommitedLeftChoice (unsafeConsumed1 c) (Result mempty mempty)
 
-unsafeConsumed1 :: Monoid s => Consumer s -> Parser s s
+unsafeConsumed1 :: MonoidNull s => Consumer s -> Parser s s
 unsafeConsumed1 c = More consume
-   where consume s = case c s
+   where consume s | mnull s = More consume
+         consume s = case c s
                      of ContinueConsumption c' -> ResultPart (mappend s) (unsafeConsumed c')
                         ConsumedPrefix p -> error "unsafeConsumed cannot handle the ConsumedPrefix case"
                         UnsafeSplitConsumed p rest -> Result rest p
@@ -295,36 +303,42 @@ unsafeConsumed1 c = More consume
 
 -- | A parser that accepts all input as long as it matches the given predicate.
 while :: (x -> Bool) -> Parser [x] [x]
-while p = unsafeConsumed c
+while p = unsafeConsumed (whileConsumer p)
+
+whileConsumer p = c
    where c s = case span p s of (_, [])-> ContinueConsumption c
                                 (prefix, suffix) -> UnsafeSplitConsumed prefix suffix
 
 -- | A parser that accepts all input as long as it matches the given predicate, and fails if there isn't any.
 while1 :: (x -> Bool) -> Parser [x] [x]
-while1 p = More (\(x:rest)-> if p x then resultPart (x:) (feed rest $ while p) else Failure)
+while1 p = unsafeConsumed1 c
+   where c s = case span p s of ([], [])-> ContinueConsumption c
+                                (_, [])-> ContinueConsumption (whileConsumer p)
+                                ([], _)-> FailedConsumption
+                                (prefix, suffix) -> UnsafeSplitConsumed prefix suffix
 
-option :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r
+option :: (Monoid s, Monoid r) => Parser s r -> Parser s r
 option p = p <|> return mempty
 
-skip :: (MonoidNull s, Monoid r) => Parser s r' -> Parser s r
+skip :: (Monoid s, Monoid r) => Parser s r' -> Parser s r
 skip p = p >> mempty
 
-many0 :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r
+many0 :: (Monoid s, Monoid r) => Parser s r -> Parser s r
 many0 p = many1 p <<|> return mempty
 
-many1 :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r
+many1 :: (Monoid s, Monoid r) => Parser s r -> Parser s r
 many1 p = More (\s-> feed s p >< many0 p)
 
-manyTill :: (MonoidNull s, Monoid r) => Parser s r -> Parser s r' -> Parser s r
+manyTill :: (Monoid s, Monoid r) => Parser s r -> Parser s r' -> Parser s r
 manyTill next end = t
    where t = skip end <<|> (next >< t)
 
 -- | A parser that accepts all input.
-acceptAll :: MonoidNull s => Parser s s
+acceptAll :: Monoid s => Parser s s
 acceptAll = CommitedLeftChoice (More $ \s-> resultPart (mappend s) acceptAll) (return mempty)
 
 -- | Parallel parser conjunction: the result of the combinator keeps accepting input as long as both arguments do.
-and :: (MonoidNull s, Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
+and :: (Monoid s, Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
 Failure `and` _ = Failure
 _ `and` Failure = Failure
 p `and` Result _ r = fmap (\x-> (x, r)) (feedEof p)
@@ -337,7 +351,7 @@ More f `and` p = More (\x-> f x `and` feed x p)
 p `and` More f = More (\x-> feed x p `and` f x)
 p1 `and` p2 = (feedEof p1 `and` feedEof p2) <|> More (\x-> feed x p1 `and` feed x p2)
 
-andThen :: (MonoidNull s, Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
+andThen :: (Monoid s, Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
 Failure `andThen` _ = Failure
 Result t r `andThen` p = resultPart (mappend (r, mempty)) (feed t (fmap ((,) mempty) p))
 ResultPart f p1 `andThen` p2 = resultPart (\(r1, r2)-> (f r1, r2)) (p1 `andThen` p2)
