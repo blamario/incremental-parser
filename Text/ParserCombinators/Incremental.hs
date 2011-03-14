@@ -27,9 +27,7 @@ module Text.ParserCombinators.Incremental (
    -- * Using a Parser
    feed, feedEof, completeResults, resultPrefix, results,
    -- * Parser primitives
-   empty, eof, anyToken, token, satisfy, acceptAll, string, while, while1,
-   -- * Parser constructors
-   Consumer, ConsumptionResult(..), consumed, consumed1, unsafeConsumed, unsafeConsumed1,
+   eof, anyToken, token, satisfy, acceptAll, string, while, while1,
    -- * Parser combinators
    count, skip, option, many, many0, many1, manyTill,
    mapIncremental, (><), (<<|>), lookAhead, lookAheadNot, and, andThen,
@@ -43,12 +41,11 @@ import Control.Applicative (Applicative (pure, (<*>)), Alternative (empty, (<|>)
 import Control.Monad (Functor (fmap), Monad (return, (>>=), (>>)), MonadPlus (mzero, mplus), liftM2)
 import Data.Maybe (fromMaybe)
 import Data.Monoid (Monoid, mempty, mappend)
-import Data.Monoid.Cancellative (LeftCancellativeMonoid(mstripPrefix))
+import Data.Monoid.Cancellative (LeftCancellativeMonoid (mstripPrefix))
+import Data.Monoid.Factorial (FactorialMonoid (splitPrimePrefix, mfoldr), mspan)
 import Data.Monoid.Null (MonoidNull(mnull))
 import Data.Foldable (Foldable, foldl, toList)
 
--- | This is a cofunctor data type for selecting a prefix of an input stream. If the next input item is acceptable, the
--- ticker function returns the ticker for the rest of the stream. If not, it returns 'Nothing'.
 data Parser s r = Failure
                 | Result s r
                 | ResultPart (r -> r) (Parser s r)
@@ -204,7 +201,8 @@ showWith sm sr Failure = "Failure"
 showWith sm sr (Result t r) = "(Result (" ++ shows t ("++) " ++ sr r ++ ")")
 showWith sm sr (ResultPart f p) = "(ResultPart (mappend " ++ sr (f mempty) ++ ") " ++ showWith sm sr p ++ ")"
 showWith sm sr (Choice p1 p2) = "(Choice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
-showWith sm sr (CommitedLeftChoice p1 p2) = "(CommitedLeftChoice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
+showWith sm sr (CommitedLeftChoice p1 p2) = 
+   "(CommitedLeftChoice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
 showWith sm sr (More f) = "(More $ " ++ sm f ++ ")"
 showWith sm sr (Apply f p) = "Apply"
 showWith sm sr (ApplyInput f p) = "ApplyInput"
@@ -240,22 +238,23 @@ eof :: (Monoid s, Monoid r) => Parser s r
 eof = lookAheadNot (More return)
 
 -- | A parser that accepts a single input item.
-anyToken :: Parser [x] x
+anyToken :: FactorialMonoid s => Parser s s
 anyToken = More f
-   where p = More f
-         f (x:rest) = Result rest x
-         f [] = p
+   where f s = case splitPrimePrefix s
+               of Just (first, rest) -> Result rest first
+                  Nothing -> anyToken
 
 -- | A parser that accepts a specific input item.
-token :: Eq x => x -> Parser [x] x
+token :: (Eq s, FactorialMonoid s) => s -> Parser s s
 token x = satisfy (== x)
 
 -- | A parser that accepts an input item only if it satisfies the given predicate.
-satisfy :: (x -> Bool) -> Parser [x] x
+satisfy :: FactorialMonoid s => (s -> Bool) -> Parser s s
 satisfy pred = p
    where p = More f
-         f (x:rest) = if pred x then Result rest x else Failure
-         f [] = p
+         f s = case splitPrimePrefix s
+               of Just (first, rest) -> if pred first then Result rest first else Failure
+                  Nothing -> p
 
 -- | A parser that accepts a given number of occurrences of the argument parser.
 count :: (Monoid s, Monoid r) => Int -> Parser s r -> Parser s r
@@ -269,53 +268,18 @@ string x = More (\y-> case (mstripPrefix x y, mstripPrefix y x)
                          (Nothing, Nothing) -> Failure
                          (Nothing, Just x') -> string x' >> return x)
 
-type Consumer s = s -> ConsumptionResult s
-
-data ConsumptionResult s = FailedConsumption
-                         | ContinueConsumption (Consumer s)
-                         | ConsumedPrefix s
-                         | UnsafeSplitConsumed s s
-
-consumed :: (LeftCancellativeMonoid s, MonoidNull s) => Consumer s -> Parser s s
-consumed c = CommitedLeftChoice (consumed1 c) (Result mempty mempty)
-
-consumed1 :: (LeftCancellativeMonoid s, MonoidNull s) => Consumer s -> Parser s s
-consumed1 c = More consume
-   where consume s | mnull s = More consume
-         consume s = case c s
-                     of ContinueConsumption c' -> ResultPart (mappend s) (consumed c')
-                        ConsumedPrefix p -> case mstripPrefix p s of Just rest -> Result rest p
-                                                                     Nothing -> Failure
-                        UnsafeSplitConsumed p rest -> Result rest p
-                        FailedConsumption -> Failure
-
-unsafeConsumed :: MonoidNull s => Consumer s -> Parser s s
-unsafeConsumed c = CommitedLeftChoice (unsafeConsumed1 c) (Result mempty mempty)
-
-unsafeConsumed1 :: MonoidNull s => Consumer s -> Parser s s
-unsafeConsumed1 c = More consume
-   where consume s | mnull s = More consume
-         consume s = case c s
-                     of ContinueConsumption c' -> ResultPart (mappend s) (unsafeConsumed c')
-                        ConsumedPrefix p -> error "unsafeConsumed cannot handle the ConsumedPrefix case"
-                        UnsafeSplitConsumed p rest -> Result rest p
-                        FailedConsumption -> Failure
-
 -- | A parser that accepts all input as long as it matches the given predicate.
-while :: (x -> Bool) -> Parser [x] [x]
-while p = unsafeConsumed (whileConsumer p)
+while :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
+while p = CommitedLeftChoice (while1 p) mempty
 
-whileConsumer p = c
-   where c s = case span p s of (_, [])-> ContinueConsumption c
-                                (prefix, suffix) -> UnsafeSplitConsumed prefix suffix
-
--- | A parser that accepts all input as long as it matches the given predicate, and fails if there isn't any.
-while1 :: (x -> Bool) -> Parser [x] [x]
-while1 p = unsafeConsumed1 c
-   where c s = case span p s of ([], [])-> ContinueConsumption c
-                                (_, [])-> ContinueConsumption (whileConsumer p)
-                                ([], _)-> FailedConsumption
-                                (prefix, suffix) -> UnsafeSplitConsumed prefix suffix
+while1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
+while1 p = w
+   where w = More f
+         f s | mnull s = w
+         f s = let (prefix, suffix) = mspan p s 
+               in if mnull prefix then Failure
+                  else if mnull suffix then resultPart (mappend prefix) (while p)
+                       else Result suffix prefix
 
 option :: (Monoid s, Monoid r) => Parser s r -> Parser s r
 option p = p <|> return mempty
