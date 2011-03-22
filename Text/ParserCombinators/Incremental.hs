@@ -30,16 +30,16 @@ module Text.ParserCombinators.Incremental (
    -- * Using a Parser
    feed, feedEof, results, completeResults, resultPrefix,
    -- * Parser primitives
-   eof, anyToken, token, satisfy, acceptAll, string, while, while1,
+   eof, anyToken, token, satisfy, acceptAll, string, takeWhile, takeWhile1,
    -- * Parser combinators
    count, skip, option, many0, many1, manyTill,
-   mapIncremental, (><), (<<|>), lookAhead, lookAheadNot, and, andThen,
+   mapIncremental, (><), (<<|>), lookAhead, notFollowedBy, and, andThen,
    -- * Utilities
    showWith
    )
 where
 
-import Prelude hiding (and, foldl)
+import Prelude hiding (and, foldl, takeWhile)
 import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative (empty, (<|>), some, many), 
                             optional, liftA2)
 import Control.Monad (Functor (fmap), Monad (return, (>>=), (>>)), MonadPlus (mzero, mplus), liftM2)
@@ -130,8 +130,8 @@ lookAhead :: Monoid s => Parser s r -> Parser s r
 lookAhead p = lookAheadInto mempty p
 
 -- | Does not consume any input; succeeds (with 'mempty' result) iff the argument parser fails.
-lookAheadNot :: (Monoid s, Monoid r) => Parser s r' -> Parser s r
-lookAheadNot = lookAheadNotInto mempty
+notFollowedBy :: (Monoid s, Monoid r) => Parser s r' -> Parser s r
+notFollowedBy = lookAheadNotInto mempty
 
 lookAheadInto :: Monoid s => s -> Parser s r -> Parser s r
 lookAheadInto t Failure               = Failure
@@ -165,7 +165,7 @@ instance Monoid s => Functor (Parser s) where
    fmap f (More g) = More (fmap f . g)
    fmap f p = Apply (fmap f) p
 
--- | The '<*>' combinator requires its both arguments to provide complete parsing results, while '*>' and '<*' preserve
+-- | The '<*>' combinator requires its both arguments to provide complete parsing results, takeWhile '*>' and '<*' preserve
 -- the incremental results.
 instance Monoid s => Applicative (Parser s) where
    pure = Result mempty
@@ -270,7 +270,7 @@ p1 >< p2 = Apply (>< p2) p1
 
 -- | A parser that fails on any input and succeeds at its end.
 eof :: (MonoidNull s, Monoid r) => Parser s r
-eof = lookAheadNot nonEmptyInput
+eof = notFollowedBy nonEmptyInput
    where nonEmptyInput = More $ \s-> if mnull s then nonEmptyInput else return s
 
 -- | A parser that accepts any single input atom.
@@ -302,18 +302,18 @@ string x = More (\y-> case (mstripPrefix x y, mstripPrefix y x)
 
 -- | A parser accepting the longest sequence of input atoms that match the given predicate; an optimized version of
 -- 'many0 . satisfy'.
-while :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
-while p = CommitedLeftChoice (while1 p) mempty
+takeWhile :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
+takeWhile p = CommitedLeftChoice (takeWhile1 p) mempty
 
 -- | A parser accepting the longest non-empty sequence of input atoms that match the given predicate; an optimized
 -- version of 'many1 . satisfy'.
-while1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
-while1 p = w
+takeWhile1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
+takeWhile1 p = w
    where w = More f
          f s | mnull s = w
          f s = let (prefix, suffix) = mspan p s 
                in if mnull prefix then Failure
-                  else if mnull suffix then resultPart (mappend prefix) (while p)
+                  else if mnull suffix then resultPart (mappend prefix) (takeWhile p)
                        else Result suffix prefix
 
 -- | Accepts the given number of occurrences of the argument parser.
