@@ -42,7 +42,7 @@ where
 import Prelude hiding (and, foldl, takeWhile)
 import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative (empty, (<|>), some, many), 
                             optional, liftA2)
-import Control.Monad (Functor (fmap), Monad (return, (>>=), (>>)), MonadPlus (mzero, mplus), liftM2)
+import Control.Monad (Functor (fmap), Monad (return, (>>=), (>>)), MonadPlus (mzero, mplus), ap, liftM2)
 import Data.Maybe (fromMaybe)
 import Data.Monoid (Monoid, mempty, mappend)
 import Data.Monoid.Cancellative (LeftCancellativeMonoid (mstripPrefix))
@@ -169,12 +169,7 @@ instance Monoid s => Functor (Parser s) where
 -- the incremental results.
 instance Monoid s => Applicative (Parser s) where
    pure = Result mempty
-   Failure <*> _ = Failure
-   Result t f <*> p = fmap f (feed t p)
-   Choice p1a p1b <*> p2 = (p1a <*> p2) <|> (p1b <*> p2)
-   More f <*> p = More (\x-> f x <*> p)
-   p1 <*> p2 = Apply (<*> p2) p1
-
+   (<*>) = ap
    (*>) = (>>)
 
    Failure <* _ = Failure
@@ -303,17 +298,20 @@ string x = More (\y-> case (mstripPrefix x y, mstripPrefix y x)
 -- | A parser accepting the longest sequence of input atoms that match the given predicate; an optimized version of
 -- 'many0 . satisfy'.
 takeWhile :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
-takeWhile p = CommitedLeftChoice (takeWhile1 p) mempty
+takeWhile = fst . takeWhiles
 
 -- | A parser accepting the longest non-empty sequence of input atoms that match the given predicate; an optimized
 -- version of 'many1 . satisfy'.
 takeWhile1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
-takeWhile1 p = w
-   where w = More f
-         f s | mnull s = w
+takeWhile1 = snd . takeWhiles
+
+takeWhiles p = (takeWhile, takeWhile1)
+   where takeWhile = CommitedLeftChoice takeWhile1 (return mempty)
+         takeWhile1 = More f
+         f s | mnull s = takeWhile1
          f s = let (prefix, suffix) = mspan p s 
                in if mnull prefix then Failure
-                  else if mnull suffix then resultPart (mappend prefix) (takeWhile p)
+                  else if mnull suffix then resultPart (mappend prefix) takeWhile
                        else Result suffix prefix
 
 -- | Accepts the given number of occurrences of the argument parser.
@@ -331,11 +329,15 @@ skip p = p >> mempty
 
 -- | Zero or more argument occurrences like 'many', but matches the longest possible input sequence.
 many0 :: (Monoid s, Monoid r) => Parser s r -> Parser s r
-many0 p = many1 p <<|> return mempty
+many0 = fst . manies
 
 -- | One or more argument occurrences like 'some', but matches the longest possible input sequence.
 many1 :: (Monoid s, Monoid r) => Parser s r -> Parser s r
-many1 p = More (\s-> feed s (p >< many0 p))
+many1 = snd . manies
+
+manies p = (many0, many1)
+   where many0 = CommitedLeftChoice many1 (return mempty)
+         many1 = More (\s-> feed s (p >< many0))
 
 -- | Repeats matching the first argument until the second one succeeds.
 manyTill :: (Monoid s, Monoid r) => Parser s r -> Parser s r' -> Parser s r
