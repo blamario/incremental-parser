@@ -55,7 +55,6 @@ data Parser s r = Failure
                 | Result s r
                 | ResultPart (Maybe (r -> r)) (Parser s r)
                 | Choice (Parser s r) (Parser s r)
-                | CommitedLeftChoice (Parser s r) (Parser s r)
                 | More (s -> Parser s r)
                 | forall r'. Apply (Parser s r' -> Parser s r) (Parser s r')
                 | forall r'. ApplyInput (s -> Parser s r' -> Parser s r) (Parser s r')
@@ -66,7 +65,6 @@ feed _ Failure = Failure
 feed s (Result t r) = Result (mappend t s) r
 feed s (ResultPart r p) = resultPart r (feed s p)
 feed s (Choice p1 p2) = feed s p1 <|> feed s p2
-feed s (CommitedLeftChoice p1 p2) = feed s p1 <<|> feed s p2
 feed s p@(More f) = f s
 feed s (Apply f p) = f (feed s p)
 feed s (ApplyInput f p) = f s (feed s p)
@@ -82,7 +80,6 @@ feedEof (ResultPart (Just r) p) = prepend r (feedEof p)
          prepend r Failure = Failure
          prepend r1 (ResultPart r2 p) = prepend (r1 . fromMaybe id r2) p
 feedEof (Choice p1 p2) = feedEof p1 <|> feedEof p2
-feedEof (CommitedLeftChoice p1 p2) = feedEof p1 <<|> feedEof p2
 feedEof More{} = Failure
 feedEof (Apply f p) = feedEof (f $ feedEof p)
 feedEof (ApplyInput f p) = feedEof (f mempty $ feedEof p)
@@ -164,7 +161,6 @@ prepend _ Failure = Failure
 prepend r1 (Result t r2) = Result t (r1 r2)
 prepend r1 (ResultPart r2 p) = ResultPart (Just (r1 . fromMaybe id r2)) p
 prepend r (Choice p1 p2) = Choice (prepend r p1) (prepend r p2)
-prepend r (CommitedLeftChoice p1 p2) = CommitedLeftChoice (prepend r p1) (prepend r p2)
 prepend r (More f) = More (prepend r . f)
 prepend r p = Apply (prepend r) p
 
@@ -174,7 +170,6 @@ instance Monoid s => Functor (Parser s) where
    fmap f (Result t r) = Result t (f r)
    fmap f (ResultPart Nothing p) = ResultPart Nothing (fmap f p)
    fmap f (Choice p1 p2) = fmap f p1 <|> fmap f p2
-   fmap f (CommitedLeftChoice p1 p2) = fmap f p1 <<|> fmap f p2
    fmap f (More g) = More (fmap f . g)
    fmap f p = Apply (fmap f) p
 
@@ -243,8 +238,6 @@ showWith sm sr (Result t r) = "(Result (" ++ shows t ("++) " ++ sr r ++ ")")
 showWith sm sr (ResultPart f p) =
    "(ResultPart (mappend " ++ sr (maybe mempty ($ mempty) f) ++ ") " ++ showWith sm sr p ++ ")"
 showWith sm sr (Choice p1 p2) = "(Choice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
-showWith sm sr (CommitedLeftChoice p1 p2) = 
-   "(CommitedLeftChoice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
 showWith sm sr (More f) = "(More $ " ++ sm f ++ ")"
 showWith sm sr (Apply f p) = "Apply"
 showWith sm sr (ApplyInput f p) = "ApplyInput"
@@ -256,21 +249,20 @@ mapIncremental f (Result t r) = Result t (f r)
 mapIncremental f (ResultPart Nothing p) = infallible (mapIncremental f p)
 mapIncremental f (ResultPart (Just r) p) = resultPart (Just $ mappend $ f (r mempty)) (mapIncremental f p)
 mapIncremental f (Choice p1 p2) = mapIncremental f p1 <|> mapIncremental f p2
-mapIncremental f (CommitedLeftChoice p1 p2) = mapIncremental f p1 <<|> mapIncremental f p2
 mapIncremental f (More g) = More (mapIncremental f . g)
 mapIncremental f p = Apply (mapIncremental f) p
 
 -- | Left-weighted choice. The right parser is used only if the left one utterly fails.
 infixl 3 <<|>
-(<<|>) :: Parser s r -> Parser s r -> Parser s r
+(<<|>) :: Monoid s => Parser s r -> Parser s r -> Parser s r
 Failure <<|> p = p
 p@Result{} <<|> _ = p
 p@ResultPart{} <<|> _ = p
 p <<|> Failure = p
 More f <<|> More g = More (\x-> f x <<|> g x)
-p1 <<|> p2@Result{} = infallible (CommitedLeftChoice p1 p2)
-p1 <<|> p2@ResultPart{} = infallible (CommitedLeftChoice p1 p2)
-p1 <<|> p2 = CommitedLeftChoice p1 p2
+p1 <<|> p2@Result{} = infallible (ApplyInput (\s p1'-> p1' <<|> feed s p2) p1)
+p1 <<|> p2@ResultPart{} = infallible (ApplyInput (\s p1'-> p1' <<|> feed s p2) p1)
+p1 <<|> p2 = ApplyInput (\s p1'-> p1' <<|> feed s p2) p1
 
 -- | Join operator on parsers of same type, preserving the incremental results.
 infixl 5 ><
@@ -331,7 +323,7 @@ takeWhile1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser s s
 takeWhile1 = snd . takeWhiles
 
 takeWhiles p = (infallible takeWhile, takeWhile1)
-   where takeWhile = CommitedLeftChoice takeWhile1 (return mempty)
+   where takeWhile = takeWhile1 <<|> return mempty
          takeWhile1 = More f
          f s | mnull s = takeWhile1
          f s = let (prefix, suffix) = mspan p s 
@@ -346,7 +338,7 @@ count n p | n > 0 = p >< count (pred n) p
 
 -- | Like 'optional', but restricted to 'Monoid' results.
 option :: (Monoid s, Monoid r) => Parser s r -> Parser s r
-option p = infallible (p <|> return mempty)
+option p = p <|> return mempty
 
 -- | Discards the results of the argument parser.
 skip :: (Monoid s, Monoid r) => Parser s r' -> Parser s r
@@ -361,7 +353,7 @@ many1 :: (Monoid s, Monoid r) => Parser s r -> Parser s r
 many1 = snd . manies
 
 manies p = (many0, many1)
-   where many0 = infallible $ CommitedLeftChoice many1 (return mempty)
+   where many0 = many1 <<|> return mempty
          many1 = More (\s-> feed s (p >< many0))
 
 -- | Repeats matching the first argument until the second one succeeds.
@@ -371,8 +363,7 @@ manyTill next end = t
 
 -- | A parser that accepts all input.
 acceptAll :: Monoid s => Parser s s
-acceptAll = infallible all
-   where all = CommitedLeftChoice (More $ \s-> resultPart (Just $ mappend s) all) (return mempty)
+acceptAll = More (\s-> resultPart (Just $ mappend s) acceptAll) <<|> return mempty
 
 -- | Parallel parser conjunction: the combined parser keeps accepting input as long as both arguments do.
 and :: (Monoid s, Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
