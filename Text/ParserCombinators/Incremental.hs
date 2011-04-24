@@ -110,62 +110,10 @@ resultPrefix p@(ResultPart Nothing _) = (mempty, p)
 resultPrefix (ResultPart (Just f) p) = (f mempty, infallible p)
 resultPrefix p = (mempty, p)
 
--- | Behaves like the argument parser, but without consuming any input.
-lookAhead :: Monoid s => Parser s r -> Parser s r
-lookAhead p = lookAheadInto mempty p
-
--- | Does not consume any input; succeeds (with 'mempty' result) iff the argument parser fails.
-notFollowedBy :: (Monoid s, Monoid r) => Parser s r' -> Parser s r
-notFollowedBy = lookAheadNotInto mempty
-
-lookAheadInto :: Monoid s => s -> Parser s r -> Parser s r
-lookAheadInto t Failure          = Failure
-lookAheadInto t (Result _ r)     = Result t r
-lookAheadInto t (ResultPart r p) = resultPart r (lookAheadInto t p)
-lookAheadInto t (Delay e f)      = Delay (lookAheadInto t e) (\s-> lookAheadInto (mappend t s) (f s))
-lookAheadInto t (Choice p1 p2)   = lookAheadInto t p1 <|> lookAheadInto t p2
-
-lookAheadNotInto :: (Monoid s, Monoid r) => s -> Parser s r' -> Parser s r
-lookAheadNotInto t Failure             = Result t mempty
-lookAheadNotInto t Result{}            = Failure
-lookAheadNotInto t ResultPart{}        = Failure
-lookAheadNotInto t (Choice Result{} _) = Failure
-lookAheadNotInto t p = Delay (lookAheadNotInto t (feedEof p)) (\s-> lookAheadNotInto (mappend t s) (feed s p))
-
--- | Provides a partial parsing result.
-resultPart :: Maybe (r -> r) -> Parser s r -> Parser s r
-resultPart _ Failure = Failure
-resultPart f (Result t r) = Result t (maybe r ($ r) f)
-resultPart Nothing (ResultPart Nothing p) = ResultPart Nothing p
-resultPart f (ResultPart g p) = ResultPart (Just (fromMaybe id f . fromMaybe id g)) p
-resultPart f p = ResultPart f p
-
-infallible :: Parser s r -> Parser s r
-infallible Failure = error "Internal contradiction"
-infallible p@ResultPart{} = p
-infallible p@Result{} = p
-infallible p = resultPart Nothing p
-
-prepend :: Monoid s => (r -> r) -> Parser s r -> Parser s r
-prepend _ Failure = Failure
-prepend r1 (Result t r2) = Result t (r1 r2)
-prepend r1 (ResultPart r2 p) = ResultPart (Just (r1 . fromMaybe id r2)) p
-prepend r (Choice p1 p2) = Choice (prepend r p1) (prepend r p2)
-prepend r p = apply (prepend r) p
-
-apply :: Monoid s => (Parser s r -> Parser s r') -> Parser s r -> Parser s r'
-apply g (Delay e f) = Delay (feedEof $ g e) (g . f)
-apply f p = Delay (feedEof $ f $ feedEof p) (\s-> f $ feed s p)
-
-more :: (s -> Parser s r) -> Parser s r
-more = Delay Failure
-
 -- | Usage of 'fmap' destroys the incrementality of parsing results, if you need it use 'mapIncremental' instead.
 instance Monoid s => Functor (Parser s) where
-   fmap f Failure = Failure
    fmap f (Result t r) = Result t (f r)
    fmap f (ResultPart Nothing p) = ResultPart Nothing (fmap f p)
-   fmap f (Choice p1 p2) = fmap f p1 <|> fmap f p2
    fmap f p = apply (fmap f) p
 
 -- | The '<*>' combinator requires its both arguments to provide complete parsing results, takeWhile '*>' and '<*'
@@ -175,10 +123,8 @@ instance Monoid s => Applicative (Parser s) where
    (<*>) = ap
    (*>) = (>>)
 
-   Failure <* _ = Failure
    Result t r <* p = feed t p *> pure r
    ResultPart r p1 <* p2@ResultPart{} = resultPart r (p1 <* p2)
-   Choice p1a p1b <* p2 = (p1a <* p2) <|> (p1b <* p2)
    p1 <* p2 = apply (<* p2) p1
 
 -- | The '<|>' choice combinator is symmetric.
@@ -198,16 +144,12 @@ instance Monoid s => Alternative (Parser s) where
 instance Monoid s => Monad (Parser s) where
    return = Result mempty
 
-   Failure >>= _ = Failure
    Result t r >>= f = feed t (f r)
    ResultPart Nothing p >>= f = p >>= f
-   Choice p1 p2 >>= f = (p1 >>= f) <|> (p2 >>= f)
    p >>= f = apply (>>= f) p
 
-   Failure >> _ = Failure
    Result t _ >> p = feed t p
    ResultPart _ p1 >> p2 = p1 >> p2
-   Choice p1a p1b >> p2 = (p1a >> p2) <|> (p1b >> p2)
    p1 >> p2 = apply (>> p2) p1
 
 -- | The 'MonadPlus' and the 'Alternative' instance differ: the former's 'mplus' combinator equals the asymmetric '<<|>'
@@ -234,39 +176,92 @@ showWith sm sr (Delay e f) = "Delay"
 
 -- | Like 'fmap', but capable of mapping partial results, being restricted to 'Monoid' types only.
 mapIncremental :: (Monoid s, Monoid a, Monoid b) => (a -> b) -> Parser s a -> Parser s b
-mapIncremental f Failure = Failure
 mapIncremental f (Result t r) = Result t (f r)
 mapIncremental f (ResultPart Nothing p) = infallible (mapIncremental f p)
 mapIncremental f (ResultPart (Just r) p) = resultPart (Just $ mappend $ f (r mempty)) (mapIncremental f p)
-mapIncremental f (Choice p1 p2) = mapIncremental f p1 <|> mapIncremental f p2
 mapIncremental f p = apply (mapIncremental f) p
+
+-- | Behaves like the argument parser, but without consuming any input.
+lookAhead :: Monoid s => Parser s r -> Parser s r
+lookAhead p = lookAheadInto mempty p
+   where lookAheadInto :: Monoid s => s -> Parser s r -> Parser s r
+         lookAheadInto t Failure          = Failure
+         lookAheadInto t (Result _ r)     = Result t r
+         lookAheadInto t (ResultPart r p) = resultPart r (lookAheadInto t p)
+         lookAheadInto t (Choice p1 p2)   = lookAheadInto t p1 <|> lookAheadInto t p2
+         lookAheadInto t (Delay e f)      = Delay (lookAheadInto t e) (\s-> lookAheadInto (mappend t s) (f s))
+
+-- | Does not consume any input; succeeds (with 'mempty' result) iff the argument parser fails.
+notFollowedBy :: (Monoid s, Monoid r) => Parser s r' -> Parser s r
+notFollowedBy = lookAheadNotInto mempty
+   where lookAheadNotInto :: (Monoid s, Monoid r) => s -> Parser s r' -> Parser s r
+         lookAheadNotInto t Failure             = Result t mempty
+         lookAheadNotInto t Result{}            = Failure
+         lookAheadNotInto t ResultPart{}        = Failure
+         lookAheadNotInto t (Choice Result{} _) = Failure
+         lookAheadNotInto t (Delay e f) = Delay (lookAheadNotInto t e) (\s-> lookAheadNotInto (mappend t s) (f s))
+
+-- | Provides a partial parsing result.
+resultPart :: Maybe (r -> r) -> Parser s r -> Parser s r
+resultPart _ Failure = Failure
+resultPart f (Result t r) = Result t (maybe r ($ r) f)
+resultPart Nothing (ResultPart Nothing p) = ResultPart Nothing p
+resultPart f (ResultPart g p) = ResultPart (Just (fromMaybe id f . fromMaybe id g)) p
+resultPart f p = ResultPart f p
+
+infallible :: Parser s r -> Parser s r
+infallible Failure = error "Internal contradiction"
+infallible p@ResultPart{} = p
+infallible p@Result{} = p
+infallible p = resultPart Nothing p
+
+isInfallible :: Parser s r -> Bool
+isInfallible Result{} = True
+isInfallible ResultPart{} = True
+isInfallible _ = False
+
+prepend :: Monoid s => (r -> r) -> Parser s r -> Parser s r
+prepend _ Failure = Failure
+prepend r1 (Result t r2) = Result t (r1 r2)
+prepend r1 (ResultPart r2 p) = ResultPart (Just (r1 . fromMaybe id r2)) p
+prepend r (Choice p1 p2) = Choice (prepend r p1) (prepend r p2)
+prepend r p = apply (prepend r) p
+
+apply :: Monoid s => (Parser s r -> Parser s r') -> Parser s r -> Parser s r'
+apply f Failure = Failure
+apply f (Choice p1 p2) = f p1 <|> f p2
+apply g (Delay e f) = Delay (feedEof $ g e) (g . f)
+apply f p = Delay (feedEof $ f $ feedEof p) (\s-> f $ feed s p)
+
+more :: (s -> Parser s r) -> Parser s r
+more = Delay Failure
 
 -- | Left-weighted choice. The right parser is used only if the left one utterly fails.
 infixl 3 <<|>
 (<<|>) :: Monoid s => Parser s r -> Parser s r -> Parser s r
-Failure <<|> p = p
-p@Result{} <<|> _ = p
-p@ResultPart{} <<|> _ = p
 p <<|> Failure = p
-Delay e1 f1 <<|> Delay e2 f2 = Delay (e1 <<|> e2) (\s-> f1 s <<|> f2 s)
-p1 <<|> p2@Result{} = infallible (Delay (feedEof p1 <<|> feedEof p2) (\s-> feed s p1 <<|> feed s p2))
-p1 <<|> p2@ResultPart{} = infallible (Delay (feedEof p1 <<|> feedEof p2) (\s-> feed s p1 <<|> feed s p2))
-p1 <<|> p2 = Delay (feedEof p1 <<|> feedEof p2) (\s-> feed s p1 <<|> feed s p2)
+p1 <<|> p2 = if isInfallible p2 then infallible p' else p'
+   where p' = commitedLeftChoice p1 p2
+         commitedLeftChoice Failure p = p
+         commitedLeftChoice p@Result{} _ = p
+         commitedLeftChoice p@ResultPart{} _ = p
+         commitedLeftChoice p1 p2 = Delay (feedEof p1 <<|> feedEof p2) (\s-> feed s p1 <<|> feed s p2)
 
 -- | Join operator on parsers of same type, preserving the incremental results.
 infixl 5 ><
 (><) :: (Monoid s, Monoid r) => Parser s r -> Parser s r -> Parser s r
-Failure >< _ = Failure
 _ >< Failure = Failure
-Result t r1 >< ResultPart r2 p = resultPart (Just (mappend r1 . fromMaybe id r2)) (feed t p)
-Result t1 r1 >< Result t2 r2 = Result (mappend t2 t1) (mappend r1 r2)
-Result t r >< p = prepend (mappend r) (feed t p)
-ResultPart r p1 >< p2@ResultPart{} = resultPart r (p1 >< p2)
-ResultPart r p1 >< p2@Result{} = resultPart r (p1 >< p2)
-ResultPart Nothing p1 >< p2 = p1 >< p2
-ResultPart (Just r) p1 >< p2 = prepend r (p1 >< p2)
-Choice p1a p1b >< p2 = (p1a >< p2) <|> (p1b >< p2)
-p1 >< p2 = apply (>< p2) p1
+p1 >< p2 | isInfallible p2 = appendIncremental p1 p2
+   where appendIncremental :: (Monoid s, Monoid r) => Parser s r -> Parser s r -> Parser s r
+         appendIncremental (Result t r) p = prepend (mappend r) (feed t p)
+         appendIncremental (ResultPart r p1) p2 = resultPart r (appendIncremental p1 p2)
+         appendIncremental p1 p2 = apply (`appendIncremental` p2) p1
+p1 >< p2 = append p1 p2
+   where append :: (Monoid s, Monoid r) => Parser s r -> Parser s r -> Parser s r
+         append (Result t r) p2 = prepend (mappend r) (feed t p2)
+         append (ResultPart Nothing p1) p2 = p1 >< p2
+         append (ResultPart (Just r) p1) p2 = prepend r (append p1 p2)
+         append p1 p2 = apply (`append` p2) p1
 
 -- | A parser that fails on any input and succeeds at its end.
 eof :: (MonoidNull s, Monoid r) => Parser s r
@@ -368,9 +363,7 @@ p1 `and` p2 = Delay (feedEof p1 `and` feedEof p2) (\s-> feed s p1 `and` feed s p
 
 -- | Parser sequence that preserves incremental results, otherwise equivalent to 'liftA2' (,)
 andThen :: (Monoid s, Monoid r1, Monoid r2) => Parser s r1 -> Parser s r2 -> Parser s (r1, r2)
-Failure `andThen` _ = Failure
 Result t r `andThen` p = resultPart (Just $ mappend (r, mempty)) (feed t (fmap ((,) mempty) p))
 ResultPart Nothing p1 `andThen` p2 = p1 `andThen` p2
 ResultPart (Just f) p1 `andThen` p2 = resultPart (Just $ \(r1, r2)-> (f r1, r2)) (p1 `andThen` p2)
-Choice p1a p1b `andThen` p2 = (p1a `andThen` p2) <|> (p1b `andThen` p2)
 p1 `andThen` p2 = apply (`andThen` p2) p1
