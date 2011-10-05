@@ -22,11 +22,11 @@
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE EmptyDataDecls, FlexibleInstances #-}
 
 module Text.ParserCombinators.Incremental.LeftBiasedLocal (
    module Text.ParserCombinators.Incremental,
-   Parser, LeftBiasedLocal
+   Parser, LeftBiasedLocal, leftmost
 )
 where
 
@@ -51,3 +51,6 @@ instance Monoid s => Alternative (Incremental.Parser LeftBiasedLocal s) where
 instance Monoid s => MonadPlus (Incremental.Parser LeftBiasedLocal s) where
    mzero = failure
    mplus = (<|>)
+
+leftmost :: Parser s r -> Incremental.Parser a s r
+leftmost p = mapType leftmost p

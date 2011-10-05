@@ -22,11 +22,11 @@
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
-{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE EmptyDataDecls, FlexibleInstances #-}
 
 module Text.ParserCombinators.Incremental.Symmetric (
    module Text.ParserCombinators.Incremental,
-   Parser, Symmetric
+   Parser, Symmetric, allOf
 )
 where
 
@@ -51,3 +51,6 @@ instance Monoid s => Alternative (Incremental.Parser Symmetric s) where
 instance Monoid s => MonadPlus (Incremental.Parser Symmetric s) where
    mzero = failure
    mplus = (<|>)
+
+allOf :: Parser s r -> Incremental.Parser a s r
+allOf p = mapType allOf p

@@ -33,7 +33,7 @@ module Text.ParserCombinators.Incremental (
    failure, more, eof, anyToken, token, satisfy, acceptAll, string, takeWhile, takeWhile1,
    -- * Parser combinators
    count, skip, option, many0, many1, manyTill,
-   mapIncremental, (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen,
+   mapType, mapIncremental, (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen,
    -- * Utilities
    showWith
    )
@@ -228,6 +228,13 @@ apply :: Monoid s => (Parser a s r -> Parser a s r') -> Parser a s r -> Parser a
 apply f Failure = Failure
 apply f (Choice p1 p2) = f p1 <||> f p2
 apply g (Delay e f) = Delay (feedEof $ g e) (g . f)
+
+mapType :: (Parser a s r -> Parser b s r) -> Parser a s r -> Parser b s r
+mapType _ Failure = Failure
+mapType _ (Result s r) = Result s r
+mapType f (ResultPart r p) = ResultPart r (f p)
+mapType f (Choice p1 p2) = Choice (f p1) (f p2)
+mapType g (Delay e f) = Delay (g e) (g . f)
 
 more :: (s -> Parser a s r) -> Parser a s r
 more = Delay Failure
