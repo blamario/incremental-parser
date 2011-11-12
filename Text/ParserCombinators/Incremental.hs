@@ -81,7 +81,7 @@ results (Result t r) = ([(r, t)], Nothing)
 results (ResultPart f p) = (map prepend results', fmap (fmap infallible . prepend) rest)
    where (results', rest) = results p
          prepend (x, y) = (f x, y)
-results (Choice p1 p2) = (results1 ++ results2, combine rest1 rest2)
+results (Choice p1 p2) | isInfallible p1 = (results1 ++ results2, combine rest1 rest2)
    where (results1, rest1) = results p1
          (results2, rest2) = results p2
          combine Nothing rest2 = rest2
@@ -94,7 +94,7 @@ results p = ([], Just (mempty, p))
 completeResults :: Parser a s r -> [(r, s)]
 completeResults (Result t r) = [(r, t)]
 completeResults (ResultPart f p) = map (\(r, t)-> (f r, t)) (completeResults p)
-completeResults (Choice p1 p2) = completeResults p1 ++ completeResults p2
+completeResults (Choice p1 p2) | isInfallible p1 = completeResults p1 ++ completeResults p2
 completeResults _ = []
 
 -- | Like 'results', but returns only the partial result prefix.
@@ -142,20 +142,20 @@ infixl 3 <<|>
 Failure <||> p = p
 p <||> Failure = p
 Delay e1 f1 <||> Delay e2 f2 = Delay (e1 <||> e2) (\s-> f1 s <||> f2 s)
-p1@Result{} <||> p2 = infallible (Choice p1 p2)
-p1@ResultPart{} <||> p2 = infallible (Choice p1 p2)
-p1 <||> p2@Result{} = infallible (Choice p1 p2)
-p1 <||> p2@ResultPart{} = infallible (Choice p1 p2)
+p1@Result{} <||> p2 = Choice p1 p2
+p1@ResultPart{} <||> p2 = Choice p1 p2
+Choice p1a p1b <||> p2 | isInfallible p1a = Choice p1a (p1b <||> p2)
+p1 <||> p2@Result{} = Choice p2 p1
+p1 <||> p2@ResultPart{} = Choice p2 p1
+p1 <||> Choice p2a p2b | isInfallible p2a = Choice p2a (p1 <||> p2b)
 p1 <||> p2 = Choice p1 p2
 
 (<<|>) :: Monoid s => Parser a s r -> Parser a s r -> Parser a s r
+Failure <<|> p = p
+p <<|> _ | isInfallible p = p
 p <<|> Failure = p
 p1 <<|> p2 = if isInfallible p2 then infallible p' else p'
-   where p' = commitedLeftChoice p1 p2
-         commitedLeftChoice Failure p = p
-         commitedLeftChoice p@Result{} _ = p
-         commitedLeftChoice p@ResultPart{} _ = p
-         commitedLeftChoice p1 p2 = Delay (feedEof p1 <<|> feedEof p2) (\s-> feed s p1 <<|> feed s p2)
+   where p' = Delay (feedEof p1 <<|> feedEof p2) (\s-> feed s p1 <<|> feed s p2)
 
 -- | Two parsers can be sequentially joined.
 instance (Monoid s, Monoid r) => Monoid (Parser a s r) where
@@ -167,11 +167,11 @@ instance (Monoid s, Monoid r) => Monoid (Parser a s r) where
 
 showWith :: (Monoid s, Monoid r, Show s) => ((s -> Parser a s r) -> String) -> (r -> String) -> Parser a s r -> String
 showWith sm sr Failure = "Failure"
-showWith sm sr (Result t r) = "(Result (" ++ shows t ("++) " ++ sr r ++ ")")
+showWith sm sr (Result t r) = "(Result " ++ shows t (" " ++ sr r ++ ")")
 showWith sm sr (ResultPart f p) =
    "(ResultPart (mappend " ++ sr (f mempty) ++ ") " ++ showWith sm sr p ++ ")"
 showWith sm sr (Choice p1 p2) = "(Choice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
-showWith sm sr (Delay e f) = "Delay"
+showWith sm sr (Delay e f) = "(Delay " ++ showWith sm sr e ++ " " ++ sm f ++ ")"
 
 -- | Like 'fmap', but capable of mapping partial results, being restricted to 'Monoid' types only.
 mapIncremental :: (Monoid s, Monoid a, Monoid b) => (a -> b) -> Parser p s a -> Parser p s b
@@ -196,7 +196,7 @@ notFollowedBy = lookAheadNotInto mempty
          lookAheadNotInto t Failure             = Result t mempty
          lookAheadNotInto t Result{}            = Failure
          lookAheadNotInto t ResultPart{}        = Failure
-         lookAheadNotInto t (Choice Result{} _) = Failure
+         lookAheadNotInto t (Choice p _) | isInfallible p = Failure
          lookAheadNotInto t (Delay e f) = Delay (lookAheadNotInto t e) (\s-> lookAheadNotInto (mappend t s) (f s))
 
 -- | Provides a partial parsing result.
@@ -215,6 +215,7 @@ infallible p = resultPart id p
 isInfallible :: Parser a s r -> Bool
 isInfallible Result{} = True
 isInfallible ResultPart{} = True
+isInfallible (Choice p _) = isInfallible p
 isInfallible _ = False
 
 prepend :: Monoid s => (r -> r) -> Parser a s r -> Parser a s r
@@ -328,8 +329,8 @@ many1 = snd . manies
 
 manies :: (Alternative (Parser a s), Monoid s, Monoid r) => Parser a s r -> (Parser a s r, Parser a s r)
 manies p = (many0, many1)
-   where many0 = many1 <|> mempty
-         many1 = more (\s-> feed s (mappend p many0))
+   where many0 = ResultPart id (many1 <|> mempty)
+         many1 = mappend p many0
 
 -- | Repeats matching the first argument until the second one succeeds.
 manyTill :: (Alternative (Parser a s), Monoid s, Monoid r) => Parser a s r -> Parser a s r' -> Parser a s r
