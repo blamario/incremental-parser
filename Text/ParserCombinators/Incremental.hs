@@ -208,9 +208,8 @@ resultPart f p = ResultPart f p
 
 infallible :: Parser a s r -> Parser a s r
 infallible Failure = error "Internal contradiction"
-infallible p@ResultPart{} = p
-infallible p@Result{} = p
-infallible p = resultPart id p
+infallible p | isInfallible p = p
+             | otherwise      = resultPart id p
 
 isInfallible :: Parser a s r -> Bool
 isInfallible Result{} = True
@@ -245,15 +244,17 @@ infixl 5 ><
 (><) :: (Monoid s, Monoid r) => Parser a s r -> Parser a s r -> Parser a s r
 _ >< Failure = Failure
 p1 >< p2 | isInfallible p2 = appendIncremental p1 p2
-   where appendIncremental :: (Monoid s, Monoid r) => Parser a s r -> Parser a s r -> Parser a s r
-         appendIncremental (Result t r) p = resultPart (mappend r) (feed t p)
-         appendIncremental (ResultPart r p1) p2 = resultPart r (appendIncremental p1 p2)
-         appendIncremental p1 p2 = apply (`appendIncremental` p2) p1
-p1 >< p2 = append p1 p2
-   where append :: (Monoid s, Monoid r) => Parser a s r -> Parser a s r -> Parser a s r
-         append (Result t r) p2 = prepend (mappend r) (feed t p2)
-         append (ResultPart r p1) p2 = prepend r (append p1 p2)
-         append p1 p2 = apply (`append` p2) p1
+         | otherwise       = append p1 p2
+   
+appendIncremental :: (Monoid s, Monoid r) => Parser a s r -> Parser a s r -> Parser a s r
+appendIncremental (Result t r) p = resultPart (mappend r) (feed t p)
+appendIncremental (ResultPart r p1) p2 = resultPart r (appendIncremental p1 p2)
+appendIncremental p1 p2 = apply (`appendIncremental` p2) p1
+
+append :: (Monoid s, Monoid r) => Parser a s r -> Parser a s r -> Parser a s r
+append (Result t r) p2 = prepend (mappend r) (feed t p2)
+append (ResultPart r p1) p2 = prepend r (append p1 p2)
+append p1 p2 = apply (`append` p2) p1
 
 -- | A parser that fails on any input and succeeds at its end.
 eof :: (MonoidNull s, Monoid r) => Parser a s r
@@ -329,8 +330,8 @@ many1 = snd . manies
 
 manies :: (Alternative (Parser a s), Monoid s, Monoid r) => Parser a s r -> (Parser a s r, Parser a s r)
 manies p = (many0, many1)
-   where many0 = ResultPart id (many1 <|> mempty)
-         many1 = mappend p many0
+   where many0 = many1 <|> mempty
+         many1 = appendIncremental p many0
 
 -- | Repeats matching the first argument until the second one succeeds.
 manyTill :: (Alternative (Parser a s), Monoid s, Monoid r) => Parser a s r -> Parser a s r' -> Parser a s r
