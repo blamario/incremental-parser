@@ -30,7 +30,7 @@ module Text.ParserCombinators.Incremental.LeftBiasedLocal (
 )
 where
 
-import Control.Applicative (Applicative, Alternative (empty, (<|>)))
+import Control.Applicative (Alternative (empty, (<|>)))
 import Control.Monad (MonadPlus (mzero, mplus))
 import Data.Monoid (Monoid)
 

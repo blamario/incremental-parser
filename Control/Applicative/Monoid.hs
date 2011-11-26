@@ -16,14 +16,12 @@
 
 -- | This module defines the AlternativeMonoid class
 
-{-# LANGUAGE FlexibleInstances #-}
-
 module Control.Applicative.Monoid (
    MonoidApplicative(..), MonoidAlternative(..)
    )
 where
 
-import Control.Applicative (Applicative (pure), Alternative ((<|>), some, many), optional, liftA2)
+import Control.Applicative (Applicative (pure), Alternative ((<|>), some, many), liftA2)
 import Data.Monoid (Monoid, mempty, mappend, mconcat)
 
 
