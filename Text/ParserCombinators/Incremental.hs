@@ -51,13 +51,13 @@ import Data.Monoid.Null (MonoidNull(mnull))
 -- | The central parser type. Its first parameter is the input monoid, the second the output.
 data Parser a s r = Failure
                   | Result s r
-                  | ResultPart (r -> r) (Parser a s r)
-                  | Choice (Parser a s r) (Parser a s r)
-                  | Delay (Parser a s r) (s -> Parser a s r)
+                  | ResultPart (r -> r) !(Parser a s r)
+                  | Choice !(Parser a s r) !(Parser a s r)
+                  | Delay !(Parser a s r) (s -> Parser a s r)
 
 -- | Feeds a chunk of the input to the parser.
 feed :: Monoid s => s -> Parser a s r -> Parser a s r
-feed _ Failure = Failure
+feed s Failure = s `seq` Failure
 feed s (Result t r) = Result (mappend t s) r
 feed s (ResultPart r p) = resultPart r (feed s p)
 feed s (Choice p1 p2) = feed s p1 <||> feed s p2
