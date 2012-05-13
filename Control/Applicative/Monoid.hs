@@ -26,7 +26,7 @@ import Data.Monoid (Monoid, mempty, mappend, mconcat)
 
 
 class Applicative f => MonoidApplicative f where
-   -- | Join operator on parsers of same type, preserving the incremental results.
+   -- | Lifted and potentially optimized monoid `mappend` operation from the parameter type.
    infixl 5 ><
    (><) :: Monoid a => f a -> f a -> f a
    (><) = liftA2 mappend
