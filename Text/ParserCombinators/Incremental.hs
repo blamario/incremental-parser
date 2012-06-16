@@ -28,7 +28,7 @@ module Text.ParserCombinators.Incremental (
    -- * The Parser type
    Parser,
    -- * Using a Parser
-   feed, feedEof, results, completeResults, resultPrefix,
+   feed, feedEof, inspect, results, completeResults, resultPrefix,
    -- * Parser primitives
    failure, more, eof, anyToken, token, satisfy, acceptAll, string, takeWhile, takeWhile1,
    -- * Parser combinators
@@ -75,16 +75,19 @@ feedEof (Delay e _) = feedEof e
 -- together with the unconsumed remainder of the input. If the parsing can continue further, the second component of the
 -- pair provides the partial result prefix together with the parser for the rest of the input.
 results :: Monoid r => Parser a s r -> ([(r, s)], Maybe (r, Parser a s r))
-results Failure = ([], Nothing)
-results (Result t r) = ([(r, t)], Nothing)
-results (ResultPart r e f) = ([], Just (r mempty, ResultPart id e f))
-results (Choice p1 p2) | isInfallible p1 = (results1 ++ results2, combine rest1 rest2)
-   where (results1, rest1) = results p1
-         (results2, rest2) = results p2
+results = fmap (fmap (\(f, p)-> (f mempty, p))) . inspect
+
+inspect :: Parser a s r -> ([(r, s)], Maybe (r -> r, Parser a s r))
+inspect Failure = ([], Nothing)
+inspect (Result t r) = ([(r, t)], Nothing)
+inspect (ResultPart r e f) = ([], Just (r, ResultPart id e f))
+inspect (Choice p1 p2) | isInfallible p1 = (results1 ++ results2, combine rest1 rest2)
+   where (results1, rest1) = inspect p1
+         (results2, rest2) = inspect p2
          combine Nothing rest = rest
          combine rest Nothing = rest
-         combine (Just (r1, p1')) (Just (r2, p2')) = Just (mempty, Choice (prepend (r1 <>) p1') (prepend (r2 <>) p2'))
-results p = ([], Just (mempty, p))
+         combine (Just (r1, p1')) (Just (r2, p2')) = Just (id, Choice (prepend r1 p1') (prepend r2 p2'))
+inspect p = ([], Just (id, p))
 
 -- | Like 'results', but returns only the complete results with the corresponding unconsumed inputs.
 completeResults :: Parser a s r -> [(r, s)]
