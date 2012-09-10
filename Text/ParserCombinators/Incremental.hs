@@ -43,6 +43,7 @@ import Prelude hiding (and, takeWhile)
 import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative ((<|>)))
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
+import Data.Maybe (fromMaybe)
 import Data.Monoid (Monoid, mempty, mappend, (<>))
 import Data.Monoid.Cancellative (LeftCancellativeMonoid (mstripPrefix))
 import Data.Monoid.Factorial (FactorialMonoid (splitPrimePrefix), mspan)
@@ -75,19 +76,20 @@ feedEof (Delay e _) = feedEof e
 -- together with the unconsumed remainder of the input. If the parsing can continue further, the second component of the
 -- pair provides the partial result prefix together with the parser for the rest of the input.
 results :: Monoid r => Parser a s r -> ([(r, s)], Maybe (r, Parser a s r))
-results = fmap (fmap (\(f, p)-> (f mempty, p))) . inspect
+results = fmap (fmap (\(mf, p)-> (fromMaybe id mf mempty, p))) . inspect
 
-inspect :: Parser a s r -> ([(r, s)], Maybe (r -> r, Parser a s r))
+inspect :: Parser a s r -> ([(r, s)], Maybe (Maybe (r -> r), Parser a s r))
 inspect Failure = ([], Nothing)
 inspect (Result t r) = ([(r, t)], Nothing)
-inspect (ResultPart r e f) = ([], Just (r, ResultPart id e f))
+inspect (ResultPart r e f) = ([], Just (Just r, ResultPart id e f))
 inspect (Choice p1 p2) | isInfallible p1 = (results1 ++ results2, combine rest1 rest2)
    where (results1, rest1) = inspect p1
          (results2, rest2) = inspect p2
          combine Nothing rest = rest
          combine rest Nothing = rest
-         combine (Just (r1, p1')) (Just (r2, p2')) = Just (id, Choice (prepend r1 p1') (prepend r2 p2'))
-inspect p = ([], Just (id, p))
+         combine (Just (r1, p1')) (Just (r2, p2')) = 
+            Just (Just id, Choice (prepend (fromMaybe id r1) p1') (prepend (fromMaybe id r2) p2'))
+inspect p = ([], Just (Nothing, p))
 
 -- | Like 'results', but returns only the complete results with the corresponding unconsumed inputs.
 completeResults :: Parser a s r -> [(r, s)]
