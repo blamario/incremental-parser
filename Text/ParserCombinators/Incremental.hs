@@ -1,5 +1,5 @@
 {- 
-    Copyright 2010-2011 Mario Blazevic
+    Copyright 2010-2012 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
@@ -72,12 +72,13 @@ feedEof (ResultPart r e _) = prepend r (feedEof e)
 feedEof (Choice p1 p2) = feedEof p1 <||> feedEof p2
 feedEof (Delay e _) = feedEof e
 
--- | Extracts all available parsing results. The first component of the result pair is a list of complete results
--- together with the unconsumed remainder of the input. If the parsing can continue further, the second component of the
--- pair provides the partial result prefix together with the parser for the rest of the input.
+-- | Extracts all available parsing results from a 'Parser'. The first component of the result pair is a list of
+-- complete results together with the unconsumed remainder of the input. If the parsing can continue further, the second
+-- component of the pair provides the partial result prefix together with the parser for the rest of the input.
 results :: Monoid r => Parser a s r -> ([(r, s)], Maybe (r, Parser a s r))
 results = fmap (fmap (\(mf, p)-> (fromMaybe id mf mempty, p))) . inspect
 
+-- | Like 'results', but more general: doesn't assume that the result type is a 'Monoid'.
 inspect :: Parser a s r -> ([(r, s)], Maybe (Maybe (r -> r), Parser a s r))
 inspect Failure = ([], Nothing)
 inspect (Result t r) = ([(r, t)], Nothing)
