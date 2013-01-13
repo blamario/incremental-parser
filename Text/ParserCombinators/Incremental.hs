@@ -45,7 +45,7 @@ import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
 import Data.Maybe (fromMaybe)
 import Data.Monoid (Monoid, mempty, mappend, (<>))
-import Data.Monoid.Cancellative (LeftReductiveMonoid (mstripPrefix))
+import Data.Monoid.Cancellative (LeftReductiveMonoid (stripPrefix))
 import Data.Monoid.Factorial (FactorialMonoid (splitPrimePrefix), mspan)
 import Data.Monoid.Null (MonoidNull(mnull))
 
@@ -290,7 +290,7 @@ satisfy predicate = p
 -- | A parser that consumes and returns the given prefix of the input.
 string :: (LeftReductiveMonoid s, MonoidNull s) => s -> Parser a s s
 string x | mnull x = mempty
-string x = more (\y-> case (mstripPrefix x y, mstripPrefix y x)
+string x = more (\y-> case (stripPrefix x y, stripPrefix y x)
                       of (Just y', _) -> Result y' x
                          (Nothing, Nothing) -> Failure
                          (Nothing, Just x') -> string x' >> return x)
