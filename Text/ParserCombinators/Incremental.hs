@@ -39,14 +39,14 @@ module Text.ParserCombinators.Incremental (
    )
 where
 
-import Prelude hiding (and, takeWhile)
+import Prelude hiding (and, span, takeWhile)
 import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative ((<|>)))
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
 import Data.Maybe (fromMaybe)
 import Data.Monoid (Monoid, mempty, mappend, (<>))
 import Data.Monoid.Cancellative (LeftReductiveMonoid (stripPrefix))
-import Data.Monoid.Factorial (FactorialMonoid (splitPrimePrefix), mspan)
+import Data.Monoid.Factorial (FactorialMonoid (splitPrimePrefix), span)
 import Data.Monoid.Null (MonoidNull(mnull))
 
 -- | The central parser type. Its first parameter is the input monoid, the second the output.
@@ -300,7 +300,7 @@ string x = more (\y-> case (stripPrefix x y, stripPrefix y x)
 takeWhile :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser a s s
 takeWhile pred = while
    where while = ResultPart id (return mempty) f
-         f s = let (prefix, suffix) = mspan pred s 
+         f s = let (prefix, suffix) = span pred s 
                in if mnull suffix then resultPart (mappend prefix) while
                   else Result suffix prefix
 
@@ -309,7 +309,7 @@ takeWhile pred = while
 takeWhile1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser a s s
 takeWhile1 pred = more f
    where f s | mnull s = takeWhile1 pred
-             | otherwise = let (prefix, suffix) = mspan pred s 
+             | otherwise = let (prefix, suffix) = span pred s 
                            in if mnull prefix then Failure
                               else if mnull suffix then resultPart (mappend prefix) (takeWhile pred)
                                    else Result suffix prefix
