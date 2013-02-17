@@ -39,7 +39,7 @@ module Text.ParserCombinators.Incremental (
    )
 where
 
-import Prelude hiding (and, span, takeWhile)
+import Prelude hiding (and, null, span, takeWhile)
 import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative ((<|>)))
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
@@ -47,7 +47,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid (Monoid, mempty, mappend, (<>))
 import Data.Monoid.Cancellative (LeftReductiveMonoid (stripPrefix))
 import Data.Monoid.Factorial (FactorialMonoid (splitPrimePrefix), span)
-import Data.Monoid.Null (MonoidNull(mnull))
+import Data.Monoid.Null (MonoidNull(null))
 
 -- | The central parser type. Its first parameter is the input monoid, the second the output.
 data Parser a s r = Failure
@@ -266,7 +266,7 @@ more = Delay Failure
 
 -- | A parser that fails on any input and succeeds at its end.
 eof :: (MonoidNull s, Monoid r) => Parser a s r
-eof = Delay mempty (\s-> if mnull s then eof else Failure)
+eof = Delay mempty (\s-> if null s then eof else Failure)
 
 -- | A parser that accepts any single input atom.
 anyToken :: FactorialMonoid s => Parser a s s
@@ -289,7 +289,7 @@ satisfy predicate = p
 
 -- | A parser that consumes and returns the given prefix of the input.
 string :: (LeftReductiveMonoid s, MonoidNull s) => s -> Parser a s s
-string x | mnull x = mempty
+string x | null x = mempty
 string x = more (\y-> case (stripPrefix x y, stripPrefix y x)
                       of (Just y', _) -> Result y' x
                          (Nothing, Nothing) -> Failure
@@ -301,17 +301,17 @@ takeWhile :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser a s s
 takeWhile pred = while
    where while = ResultPart id (return mempty) f
          f s = let (prefix, suffix) = span pred s 
-               in if mnull suffix then resultPart (mappend prefix) while
+               in if null suffix then resultPart (mappend prefix) while
                   else Result suffix prefix
 
 -- | A parser accepting the longest non-empty sequence of input atoms that match the given predicate; an optimized
 -- version of 'concatSome . satisfy'.
 takeWhile1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser a s s
 takeWhile1 pred = more f
-   where f s | mnull s = takeWhile1 pred
+   where f s | null s = takeWhile1 pred
              | otherwise = let (prefix, suffix) = span pred s 
-                           in if mnull prefix then Failure
-                              else if mnull suffix then resultPart (mappend prefix) (takeWhile pred)
+                           in if null prefix then Failure
+                              else if null suffix then resultPart (mappend prefix) (takeWhile pred)
                                    else Result suffix prefix
 
 -- | Accepts the given number of occurrences of the argument parser.
