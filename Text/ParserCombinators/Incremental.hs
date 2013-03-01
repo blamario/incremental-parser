@@ -31,6 +31,8 @@ module Text.ParserCombinators.Incremental (
    feed, feedEof, inspect, results, completeResults, resultPrefix,
    -- * Parser primitives
    failure, more, eof, anyToken, token, satisfy, acceptAll, string, takeWhile, takeWhile1,
+   -- ** Character primitives
+   satisfyChar, takeCharsWhile, takeCharsWhile1,
    -- * Parser combinators
    count, skip, moptional, concatMany, concatSome, manyTill,
    mapType, mapIncremental, (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen,
@@ -48,6 +50,8 @@ import Data.Monoid (Monoid, mempty, mappend, (<>))
 import Data.Monoid.Cancellative (LeftReductiveMonoid (stripPrefix))
 import Data.Monoid.Factorial (FactorialMonoid (splitPrimePrefix), span)
 import Data.Monoid.Null (MonoidNull(null))
+import Data.Monoid.Textual (TextualMonoid)
+import qualified Data.Monoid.Textual as Textual
 
 -- | The central parser type. Its first parameter is the input monoid, the second the output.
 data Parser a s r = Failure
@@ -287,6 +291,17 @@ satisfy predicate = p
                of Just (first, rest) -> if predicate first then Result rest first else Failure
                   Nothing -> p
 
+-- | Specialization of 'satisfy' on 'TextualMonoid' inputs, accepting an input character only if it satisfies the given
+-- predicate.
+satisfyChar :: TextualMonoid s => (Char -> Bool) -> Parser a s s
+satisfyChar predicate = p
+   where p = more f
+         f s = case splitPrimePrefix s
+               of Just (first, rest) -> case Textual.characterPrefix first
+                                        of Just c -> if predicate c then Result rest first else Failure
+                                           Nothing -> if null rest then p else Failure
+                  Nothing -> p
+
 -- | A parser that consumes and returns the given prefix of the input.
 string :: (LeftReductiveMonoid s, MonoidNull s) => s -> Parser a s s
 string x | null x = mempty
@@ -300,7 +315,7 @@ string x = more (\y-> case (stripPrefix x y, stripPrefix y x)
 takeWhile :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser a s s
 takeWhile pred = while
    where while = ResultPart id (return mempty) f
-         f s = let (prefix, suffix) = span pred s 
+         f s = let (prefix, suffix) = span pred s
                in if null suffix then resultPart (mappend prefix) while
                   else Result suffix prefix
 
@@ -309,9 +324,28 @@ takeWhile pred = while
 takeWhile1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser a s s
 takeWhile1 pred = more f
    where f s | null s = takeWhile1 pred
-             | otherwise = let (prefix, suffix) = span pred s 
+             | otherwise = let (prefix, suffix) = span pred s
                            in if null prefix then Failure
                               else if null suffix then resultPart (mappend prefix) (takeWhile pred)
+                                   else Result suffix prefix
+
+-- | Specialization of 'takeWhile' on 'TextualMonoid' inputs, accepting the longest sequence of input characters that
+-- match the given predicate; an optimized version of 'concatMany . satisfyChar'.
+takeCharsWhile :: (TextualMonoid s, MonoidNull s) => (Char -> Bool) -> Parser a s s
+takeCharsWhile pred = while
+   where while = ResultPart id (return mempty) f
+         f s = let (prefix, suffix) = Textual.span pred s
+               in if null suffix then resultPart (mappend prefix) while
+                  else Result suffix prefix
+
+-- | Specialization of 'takeWhile1' on 'TextualMonoid' inputs, accepting the longest non-empty sequence of input atoms
+-- that match the given predicate; an optimized version of 'concatSome . satisfyChar'.
+takeCharsWhile1 :: (TextualMonoid s, MonoidNull s) => (Char -> Bool) -> Parser a s s
+takeCharsWhile1 pred = more f
+   where f s | null s = takeCharsWhile1 pred
+             | otherwise = let (prefix, suffix) = Textual.span pred s
+                           in if null prefix then Failure
+                              else if null suffix then resultPart (mappend prefix) (takeCharsWhile pred)
                                    else Result suffix prefix
 
 -- | Accepts the given number of occurrences of the argument parser.
