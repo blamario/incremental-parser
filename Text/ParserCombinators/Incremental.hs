@@ -334,19 +334,26 @@ takeWhile1 pred = more f
 takeCharsWhile :: (TextualMonoid s, MonoidNull s) => (Char -> Bool) -> Parser a s s
 takeCharsWhile pred = while
    where while = ResultPart id (return mempty) f
-         f s = let (prefix, suffix) = Textual.span pred s
+         f s = let (prefix, suffix) = Textual.span (const False) pred s
                in if null suffix then resultPart (mappend prefix) while
-                  else Result suffix prefix
+                  else let (prefix', suffix') = Textual.span (const True) (const False) suffix
+                       in if null prefix' then Result suffix prefix
+                          else resultPart (mappend prefix . mappend prefix') (f suffix')
 
 -- | Specialization of 'takeWhile1' on 'TextualMonoid' inputs, accepting the longest non-empty sequence of input atoms
 -- that match the given predicate; an optimized version of 'concatSome . satisfyChar'.
 takeCharsWhile1 :: (TextualMonoid s, MonoidNull s) => (Char -> Bool) -> Parser a s s
 takeCharsWhile1 pred = more f
    where f s | null s = takeCharsWhile1 pred
-             | otherwise = let (prefix, suffix) = Textual.span pred s
-                           in if null prefix then Failure
+             | otherwise = let (prefix, suffix) = Textual.span (const False) pred s
+                               (prefix', suffix') = Textual.span (const True) (const False) suffix
+                           in if null prefix
+                              then if null prefix' then Failure
+                                   else prepend (mappend prefix') (f suffix')
                               else if null suffix then resultPart (mappend prefix) (takeCharsWhile pred)
-                                   else Result suffix prefix
+                                   else if null prefix' then Result suffix prefix
+                                        else resultPart (mappend prefix . mappend prefix')
+                                                        (feed suffix' $ takeCharsWhile pred)
 
 -- | Accepts the given number of occurrences of the argument parser.
 count :: (Monoid s, Monoid r) => Int -> Parser a s r -> Parser a s r
