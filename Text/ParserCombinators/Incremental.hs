@@ -53,15 +53,16 @@ import Data.Monoid.Null (MonoidNull(null))
 import Data.Monoid.Textual (TextualMonoid)
 import qualified Data.Monoid.Textual as Textual
 
--- | The central parser type. Its first parameter is the input monoid, the second the output.
-data Parser a s r = Failure
+-- | The central parser type. Its first parameter is the subtype of the parser, the second is the input monoid type, the
+-- third the output type.
+data Parser t s r = Failure
                   | Result s r
-                  | ResultPart (r -> r) (Parser a s r) (s -> Parser a s r)
-                  | Delay (Parser a s r) (s -> Parser a s r)
-                  | Choice (Parser a s r) (Parser a s r)
+                  | ResultPart (r -> r) (Parser t s r) (s -> Parser t s r)
+                  | Delay (Parser t s r) (s -> Parser t s r)
+                  | Choice (Parser t s r) (Parser t s r)
 
 -- | Feeds a chunk of the input to the parser.
-feed :: Monoid s => s -> Parser a s r -> Parser a s r
+feed :: Monoid s => s -> Parser t s r -> Parser t s r
 feed s Failure = s `seq` Failure
 feed s (Result t r) = Result (mappend t s) r
 feed s (ResultPart r _ f) = resultPart r (f s)
@@ -69,7 +70,7 @@ feed s (Choice p1 p2) = feed s p1 <||> feed s p2
 feed s (Delay _ f) = f s
 
 -- | Signals the end of the input.
-feedEof :: Monoid s => Parser a s r -> Parser a s r
+feedEof :: Monoid s => Parser t s r -> Parser t s r
 feedEof Failure = Failure
 feedEof p@Result{} = p
 feedEof (ResultPart r e _) = prepend r (feedEof e)
@@ -79,11 +80,11 @@ feedEof (Delay e _) = feedEof e
 -- | Extracts all available parsing results from a 'Parser'. The first component of the result pair is a list of
 -- complete results together with the unconsumed remainder of the input. If the parsing can continue further, the second
 -- component of the pair provides the partial result prefix together with the parser for the rest of the input.
-results :: Monoid r => Parser a s r -> ([(r, s)], Maybe (r, Parser a s r))
+results :: Monoid r => Parser t s r -> ([(r, s)], Maybe (r, Parser t s r))
 results = fmap (fmap (\(mf, p)-> (fromMaybe id mf mempty, p))) . inspect
 
 -- | Like 'results', but more general: doesn't assume that the result type is a 'Monoid'.
-inspect :: Parser a s r -> ([(r, s)], Maybe (Maybe (r -> r), Parser a s r))
+inspect :: Parser t s r -> ([(r, s)], Maybe (Maybe (r -> r), Parser t s r))
 inspect Failure = ([], Nothing)
 inspect (Result t r) = ([(r, t)], Nothing)
 inspect (ResultPart r e f) = ([], Just (Just r, ResultPart id e f))
@@ -97,30 +98,30 @@ inspect (Choice p1 p2) | isInfallible p1 = (results1 ++ results2, combine rest1 
 inspect p = ([], Just (Nothing, p))
 
 -- | Like 'results', but returns only the complete results with the corresponding unconsumed inputs.
-completeResults :: Parser a s r -> [(r, s)]
+completeResults :: Parser t s r -> [(r, s)]
 completeResults (Result t r) = [(r, t)]
 completeResults (ResultPart r e f) = map (\(r', t)-> (r r', t)) (completeResults e)
 completeResults (Choice p1 p2) | isInfallible p1 = completeResults p1 ++ completeResults p2
 completeResults _ = []
 
 -- | Like 'results', but returns only the partial result prefix.
-resultPrefix :: Monoid r => Parser a s r -> (r, Parser a s r)
+resultPrefix :: Monoid r => Parser t s r -> (r, Parser t s r)
 resultPrefix (Result t r) = (r, Result t mempty)
 resultPrefix (ResultPart r e f) = (r mempty, ResultPart id e f)
 resultPrefix p = (mempty, p)
 
-failure :: Parser a s r
+failure :: Parser t s r
 failure = Failure
 
 -- | Usage of 'fmap' destroys the incrementality of parsing results, if you need it use 'mapIncremental' instead.
-instance Monoid s => Functor (Parser a s) where
+instance Monoid s => Functor (Parser t s) where
    fmap f (Result t r) = Result t (f r)
    fmap g (ResultPart r e f) = ResultPart id (fmap g $ prepend r $ feedEof e) (fmap g . prepend r . f)
    fmap f p = apply (fmap f) p
 
 -- | The '<*>' combinator requires its both arguments to provide complete parsing results, takeWhile '*>' and '<*'
 -- preserve the incremental results.
-instance Monoid s => Applicative (Parser a s) where
+instance Monoid s => Applicative (Parser t s) where
    pure = Result mempty
    (<*>) = ap
    (*>) = (>>)
@@ -130,7 +131,7 @@ instance Monoid s => Applicative (Parser a s) where
    p1 <* p2 = apply (<* p2) p1
 
 -- | Usage of '>>=' destroys the incrementality of its left argument's parsing results, but '>>' is safe to use.
-instance Monoid s => Monad (Parser a s) where
+instance Monoid s => Monad (Parser t s) where
    return = Result mempty
 
    Result t r >>= f = feed t (f r)
@@ -141,32 +142,32 @@ instance Monoid s => Monad (Parser a s) where
                          | otherwise = Delay (e >> p) ((>> p) . f)
    p1 >> p2 = apply (>> p2) p1
 
-instance Monoid s => MonoidApplicative (Parser a s) where
+instance Monoid s => MonoidApplicative (Parser t s) where
    -- | Join operator on two parsers of the same type, preserving the incremental results.
    _ >< Failure = Failure
    p1 >< p2 | isInfallible p2 = appendIncremental p1 p2
             | otherwise       = append p1 p2
 
-appendIncremental :: (Monoid s, Monoid r) => Parser a s r -> Parser a s r -> Parser a s r
+appendIncremental :: (Monoid s, Monoid r) => Parser t s r -> Parser t s r -> Parser t s r
 appendIncremental (Result t r) p = resultPart (mappend r) (feed t p)
 appendIncremental (ResultPart r e f) p2 = ResultPart r (appendIncremental e p2) (flip appendIncremental p2 . f)
 appendIncremental p1 p2 = apply (`appendIncremental` p2) p1
 
-append :: (Monoid s, Monoid r) => Parser a s r -> Parser a s r -> Parser a s r
+append :: (Monoid s, Monoid r) => Parser t s r -> Parser t s r -> Parser t s r
 append (Result t r) p2 = prepend (mappend r) (feed t p2)
 append p1 p2 = apply (`append` p2) p1
 
 -- | Two parsers can be sequentially joined.
-instance (Monoid s, Monoid r) => Monoid (Parser a s r) where
+instance (Monoid s, Monoid r) => Monoid (Parser t s r) where
    mempty = return mempty
    mappend = (><)
 
-instance (Alternative (Parser a s), Monoid s) => MonoidAlternative (Parser a s) where
+instance (Alternative (Parser t s), Monoid s) => MonoidAlternative (Parser t s) where
    moptional p = p <|> mempty
    concatMany = fst . manies
    concatSome = snd . manies
 
-manies :: (Alternative (Parser a s), Monoid s, Monoid r) => Parser a s r -> (Parser a s r, Parser a s r)
+manies :: (Alternative (Parser t s), Monoid s, Monoid r) => Parser t s r -> (Parser t s r, Parser t s r)
 manies p = (many, some)
    where many = some <|> mempty
          some = appendIncremental p many
@@ -174,7 +175,7 @@ manies p = (many, some)
 infixl 3 <||>
 infixl 3 <<|>
 
-(<||>) :: Parser a s r -> Parser a s r -> Parser a s r
+(<||>) :: Parser t s r -> Parser t s r -> Parser t s r
 Delay e1 f1 <||> Delay e2 f2 = Delay (e1 <||> e2) (\s-> f1 s <||> f2 s)
 Failure <||> p = p
 p <||> Failure = p
@@ -186,7 +187,7 @@ p1 <||> p2@ResultPart{} = Choice p2 p1
 p1 <||> Choice p2a p2b | isInfallible p2a = Choice p2a (p1 <||> p2b)
 p1 <||> p2 = Choice p1 p2
 
-(<<|>) :: Monoid s => Parser a s r -> Parser a s r -> Parser a s r
+(<<|>) :: Monoid s => Parser t s r -> Parser t s r -> Parser t s r
 Failure <<|> p = p
 p <<|> _ | isInfallible p = p
 p <<|> Failure = p
@@ -194,10 +195,10 @@ p1 <<|> p2 = if isInfallible p2 then ResultPart id e f else Delay e f
    where e = feedEof p1 <<|> feedEof p2
          f s = feed s p1 <<|> feed s p2
 
--- instance (Monoid s, Monoid r, Show s, Show r) => Show (Parser a s r) where
+-- instance (Monoid s, Monoid r, Show s, Show r) => Show (Parser t s r) where
 --    show = showWith (show . ($ mempty)) show
 
-showWith :: (Monoid s, Monoid r, Show s) => ((s -> Parser a s r) -> String) -> (r -> String) -> Parser a s r -> String
+showWith :: (Monoid s, Monoid r, Show s) => ((s -> Parser t s r) -> String) -> (r -> String) -> Parser t s r -> String
 showWith _ _ Failure = "Failure"
 showWith _ sr (Result t r) = "(Result " ++ shows t (" " ++ sr r ++ ")")
 showWith sm sr (ResultPart r e f) =
@@ -213,9 +214,9 @@ mapIncremental g (ResultPart r e f) =
 mapIncremental f p = apply (mapIncremental f) p
 
 -- | Behaves like the argument parser, but without consuming any input.
-lookAhead :: Monoid s => Parser a s r -> Parser a s r
+lookAhead :: Monoid s => Parser t s r -> Parser t s r
 lookAhead p = lookAheadInto mempty p
-   where lookAheadInto :: Monoid s => s -> Parser a s r -> Parser a s r
+   where lookAheadInto :: Monoid s => s -> Parser t s r -> Parser t s r
          lookAheadInto _ Failure            = Failure
          lookAheadInto t (Result _ r)       = Result t r
          lookAheadInto t (ResultPart r e f) = ResultPart r (lookAheadInto t e) (\s-> lookAheadInto (mappend t s) (f s))
@@ -223,9 +224,9 @@ lookAhead p = lookAheadInto mempty p
          lookAheadInto t (Delay e f)        = Delay (lookAheadInto t e) (\s-> lookAheadInto (mappend t s) (f s))
 
 -- | Does not consume any input; succeeds (with 'mempty' result) iff the argument parser fails.
-notFollowedBy :: (Monoid s, Monoid r) => Parser a s r' -> Parser a s r
+notFollowedBy :: (Monoid s, Monoid r) => Parser t s r' -> Parser t s r
 notFollowedBy = lookAheadNotInto mempty
-   where lookAheadNotInto :: (Monoid s, Monoid r) => s -> Parser a s r' -> Parser a s r
+   where lookAheadNotInto :: (Monoid s, Monoid r) => s -> Parser t s r' -> Parser t s r
          lookAheadNotInto t Failure     = Result t mempty
          lookAheadNotInto t (Delay e f) = Delay (lookAheadNotInto t e) (\s-> lookAheadNotInto (mappend t s) (f s))
          lookAheadNotInto t p | isInfallible p = Failure
@@ -233,58 +234,58 @@ notFollowedBy = lookAheadNotInto mempty
                                                   (\s-> lookAheadNotInto (mappend t s) (feed s p))
 
 -- | Provides a partial parsing result.
-resultPart :: Monoid s => (r -> r) -> Parser a s r -> Parser a s r
+resultPart :: Monoid s => (r -> r) -> Parser t s r -> Parser t s r
 resultPart _ Failure = error "Internal contradiction"
 resultPart f (Result t r) = Result t (f r)
 resultPart r1 (ResultPart r2 e f) = ResultPart (r1 . r2) e f
 resultPart r p = ResultPart r (feedEof p) (flip feed p)
 
-isInfallible :: Parser a s r -> Bool
+isInfallible :: Parser t s r -> Bool
 isInfallible Result{} = True
 isInfallible ResultPart{} = True
 isInfallible (Choice p _) = isInfallible p
 isInfallible _ = False
 
-prepend :: (r -> r) -> Parser a s r -> Parser a s r
+prepend :: (r -> r) -> Parser t s r -> Parser t s r
 prepend _ Failure = Failure
 prepend r1 (Result t r2) = Result t (r1 r2)
 prepend r1 (ResultPart r2 e f) = ResultPart (r1 . r2) e f
 prepend r (Choice p1 p2) = Choice (prepend r p1) (prepend r p2)
 prepend r (Delay e f) = Delay (prepend r e) (prepend r . f)
 
-apply :: Monoid s => (Parser a s r -> Parser a s r') -> Parser a s r -> Parser a s r'
+apply :: Monoid s => (Parser t s r -> Parser t s r') -> Parser t s r -> Parser t s r'
 apply _ Failure = Failure
 apply f (Choice p1 p2) = f p1 <||> f p2
 apply g (Delay e f) = Delay (g e) (g . f)
 apply f p = Delay (f $ feedEof p) (\s-> f $ feed s p)
 
-mapType :: (Parser a s r -> Parser b s r) -> Parser a s r -> Parser b s r
+mapType :: (Parser t s r -> Parser b s r) -> Parser t s r -> Parser b s r
 mapType _ Failure = Failure
 mapType _ (Result s r) = Result s r
 mapType g (ResultPart r e f) = ResultPart r (g e) (g . f)
 mapType f (Choice p1 p2) = Choice (f p1) (f p2)
 mapType g (Delay e f) = Delay (g e) (g . f)
 
-more :: (s -> Parser a s r) -> Parser a s r
+more :: (s -> Parser t s r) -> Parser t s r
 more = Delay Failure
 
 -- | A parser that fails on any input and succeeds at its end.
-eof :: (MonoidNull s, Monoid r) => Parser a s r
+eof :: (MonoidNull s, Monoid r) => Parser t s r
 eof = Delay mempty (\s-> if null s then eof else Failure)
 
 -- | A parser that accepts any single input atom.
-anyToken :: FactorialMonoid s => Parser a s s
+anyToken :: FactorialMonoid s => Parser t s s
 anyToken = more f
    where f s = case splitPrimePrefix s
                of Just (first, rest) -> Result rest first
                   Nothing -> anyToken
 
 -- | A parser that accepts a specific input atom.
-token :: (Eq s, FactorialMonoid s) => s -> Parser a s s
+token :: (Eq s, FactorialMonoid s) => s -> Parser t s s
 token x = satisfy (== x)
 
 -- | A parser that accepts an input atom only if it satisfies the given predicate.
-satisfy :: FactorialMonoid s => (s -> Bool) -> Parser a s s
+satisfy :: FactorialMonoid s => (s -> Bool) -> Parser t s s
 satisfy predicate = p
    where p = more f
          f s = case splitPrimePrefix s
@@ -293,7 +294,7 @@ satisfy predicate = p
 
 -- | Specialization of 'satisfy' on 'TextualMonoid' inputs, accepting an input character only if it satisfies the given
 -- predicate.
-satisfyChar :: TextualMonoid s => (Char -> Bool) -> Parser a s s
+satisfyChar :: TextualMonoid s => (Char -> Bool) -> Parser t s s
 satisfyChar predicate = p
    where p = more f
          f s = case splitPrimePrefix s
@@ -303,7 +304,7 @@ satisfyChar predicate = p
                   Nothing -> p
 
 -- | A parser that consumes and returns the given prefix of the input.
-string :: (LeftReductiveMonoid s, MonoidNull s) => s -> Parser a s s
+string :: (LeftReductiveMonoid s, MonoidNull s) => s -> Parser t s s
 string x | null x = mempty
 string x = more (\y-> case (stripPrefix x y, stripPrefix y x)
                       of (Just y', _) -> Result y' x
@@ -312,7 +313,7 @@ string x = more (\y-> case (stripPrefix x y, stripPrefix y x)
 
 -- | A parser accepting the longest sequence of input atoms that match the given predicate; an optimized version of
 -- 'concatMany . satisfy'.
-takeWhile :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser a s s
+takeWhile :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser t s s
 takeWhile pred = while
    where while = ResultPart id (return mempty) f
          f s = let (prefix, suffix) = span pred s
@@ -321,7 +322,7 @@ takeWhile pred = while
 
 -- | A parser accepting the longest non-empty sequence of input atoms that match the given predicate; an optimized
 -- version of 'concatSome . satisfy'.
-takeWhile1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser a s s
+takeWhile1 :: (FactorialMonoid s, MonoidNull s) => (s -> Bool) -> Parser t s s
 takeWhile1 pred = more f
    where f s | null s = takeWhile1 pred
              | otherwise = let (prefix, suffix) = span pred s
@@ -331,7 +332,7 @@ takeWhile1 pred = more f
 
 -- | Specialization of 'takeWhile' on 'TextualMonoid' inputs, accepting the longest sequence of input characters that
 -- match the given predicate; an optimized version of 'concatMany . satisfyChar'.
-takeCharsWhile :: (TextualMonoid s, MonoidNull s) => (Char -> Bool) -> Parser a s s
+takeCharsWhile :: (TextualMonoid s, MonoidNull s) => (Char -> Bool) -> Parser t s s
 takeCharsWhile pred = while
    where while = ResultPart id (return mempty) f
          f s = let (prefix, suffix) = Textual.span (const False) pred s
@@ -342,7 +343,7 @@ takeCharsWhile pred = while
 
 -- | Specialization of 'takeWhile1' on 'TextualMonoid' inputs, accepting the longest non-empty sequence of input atoms
 -- that match the given predicate; an optimized version of 'concatSome . satisfyChar'.
-takeCharsWhile1 :: (TextualMonoid s, MonoidNull s) => (Char -> Bool) -> Parser a s s
+takeCharsWhile1 :: (TextualMonoid s, MonoidNull s) => (Char -> Bool) -> Parser t s s
 takeCharsWhile1 pred = more f
    where f s | null s = takeCharsWhile1 pred
              | otherwise = let (prefix, suffix) = Textual.span (const False) pred s
@@ -356,26 +357,26 @@ takeCharsWhile1 pred = more f
                                                         (feed suffix' $ takeCharsWhile pred)
 
 -- | Accepts the given number of occurrences of the argument parser.
-count :: (Monoid s, Monoid r) => Int -> Parser a s r -> Parser a s r
+count :: (Monoid s, Monoid r) => Int -> Parser t s r -> Parser t s r
 count n p | n > 0 = p >< count (pred n) p
           | otherwise = mempty
 
 -- | Discards the results of the argument parser.
-skip :: (Monoid s, Monoid r) => Parser a s r' -> Parser a s r
+skip :: (Monoid s, Monoid r) => Parser t s r' -> Parser t s r
 skip p = p *> mempty
 
 -- | Repeats matching the first argument until the second one succeeds.
-manyTill :: (Alternative (Parser a s), Monoid s, Monoid r) => Parser a s r -> Parser a s r' -> Parser a s r
+manyTill :: (Alternative (Parser t s), Monoid s, Monoid r) => Parser t s r -> Parser t s r' -> Parser t s r
 manyTill next end = t
    where t = skip end <|> mappend next t
 
 -- | A parser that accepts all input.
-acceptAll :: Monoid s => Parser a s s
+acceptAll :: Monoid s => Parser t s s
 acceptAll = ResultPart id mempty f
    where f s = ResultPart (mappend s) mempty f
 
 -- | Parallel parser conjunction: the combined parser keeps accepting input as long as both arguments do.
-and :: (Monoid s, Monoid r1, Monoid r2) => Parser a s r1 -> Parser a s r2 -> Parser a s (r1, r2)
+and :: (Monoid s, Monoid r1, Monoid r2) => Parser t s r1 -> Parser t s r2 -> Parser t s (r1, r2)
 Failure `and` _ = Failure
 _ `and` Failure = Failure
 p `and` Result _ r = fmap (\x-> (x, r)) (feedEof p)
@@ -389,7 +390,7 @@ p1 `and` Choice p2a p2b = (p1 `and` p2a) <||> (p1 `and` p2b)
 p1 `and` p2 = Delay (feedEof p1 `and` feedEof p2) (\s-> feed s p1 `and` feed s p2)
 
 -- | A sequence parser that preserves incremental results, otherwise equivalent to 'Alternative.liftA2' (,)
-andThen :: (Monoid s, Monoid r1, Monoid r2) => Parser a s r1 -> Parser a s r2 -> Parser a s (r1, r2)
+andThen :: (Monoid s, Monoid r1, Monoid r2) => Parser t s r1 -> Parser t s r2 -> Parser t s (r1, r2)
 Result t r `andThen` p | isInfallible p = resultPart (mappend (r, mempty)) (feed t (fmap ((,) mempty) p))
 ResultPart r e f `andThen` p | isInfallible p = ResultPart (\(r1, r2)-> (r r1, r2)) (e `andThen` p) ((`andThen` p) . f)
 p1 `andThen` p2 = apply (`andThen` p2) p1
