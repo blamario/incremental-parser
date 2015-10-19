@@ -1,10 +1,10 @@
 {- 
-    Copyright 2010-2012 Mario Blazevic
+    Copyright 2010-2015 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
     The SCC project is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
-    License as published by the Free Software Foundation, either version 3 of the License, or (at your moptional) any later
+    License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later
     version.
 
     SCC is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
@@ -123,8 +123,13 @@ instance Monoid s => Functor (Parser t s) where
 -- preserve the incremental results.
 instance Monoid s => Applicative (Parser t s) where
    pure = Result mempty
-   (<*>) = ap
-   (*>) = (>>)
+   Result t r <*> p = r <$> feed t p
+   p1 <*> p2 = apply (<*> p2) p1
+
+   Result t _ *> p = feed t p
+   ResultPart _ e f *> p | isInfallible p = ResultPart id (e *> p) ((*> p) . f)
+                         | otherwise = Delay (e *> p) ((*> p) . f)
+   p1 *> p2 = apply (*> p2) p1
 
    Result t r <* p = feed t p *> pure r
    ResultPart r e f <* p | isInfallible p = ResultPart r (e <* p) ((<* p) . f)
@@ -132,15 +137,10 @@ instance Monoid s => Applicative (Parser t s) where
 
 -- | Usage of '>>=' destroys the incrementality of its left argument's parsing results, but '>>' is safe to use.
 instance Monoid s => Monad (Parser t s) where
-   return = Result mempty
-
+   return = pure
    Result t r >>= f = feed t (f r)
    p >>= f = apply (>>= f) p
-
-   Result t _ >> p = feed t p
-   ResultPart _ e f >> p | isInfallible p = ResultPart id (e >> p) ((>> p) . f)
-                         | otherwise = Delay (e >> p) ((>> p) . f)
-   p1 >> p2 = apply (>> p2) p1
+   (>>) = (*>)
 
 instance Monoid s => MonoidApplicative (Parser t s) where
    -- | Join operator on two parsers of the same type, preserving the incremental results.
