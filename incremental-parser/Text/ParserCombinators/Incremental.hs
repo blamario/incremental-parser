@@ -169,7 +169,7 @@ instance (Alternative (Parser t s), Monoid s) => MonoidAlternative (Parser t s) 
 
 manies :: (Alternative (Parser t s), Monoid s, Monoid r) => Parser t s r -> (Parser t s r, Parser t s r)
 manies p = (many, some)
-   where many = some <|> mempty
+   where many = resultPart id (some <|> mempty)
          some = appendIncremental p many
 
 infixl 3 <||>
@@ -257,6 +257,7 @@ apply :: Monoid s => (Parser t s r -> Parser t s r') -> Parser t s r -> Parser t
 apply _ Failure = Failure
 apply f (Choice p1 p2) = f p1 <||> f p2
 apply g (Delay e f) = Delay (g e) (g . f)
+apply g (ResultPart r e f) = Delay (g $ prepend r e) (g . prepend r . f)
 apply f p = Delay (f $ feedEof p) (\s-> f $ feed s p)
 
 mapType :: (Parser t s r -> Parser b s r) -> Parser t s r -> Parser b s r
@@ -367,8 +368,9 @@ skip p = p *> mempty
 
 -- | Repeats matching the first argument until the second one succeeds.
 manyTill :: (Alternative (Parser t s), Monoid s, Monoid r) => Parser t s r -> Parser t s r' -> Parser t s r
-manyTill next end = t
-   where t = skip end <|> mappend next t
+manyTill next end = if isInfallible next then t1 else t2
+   where t1 = skip end <|> appendIncremental next t1
+         t2 = skip end <|> append next t2
 
 -- | A parser that accepts all input.
 acceptAll :: Monoid s => Parser t s s
