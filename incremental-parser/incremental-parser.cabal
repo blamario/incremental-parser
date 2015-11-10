@@ -41,3 +41,11 @@ test-suite Main
                      Text.ParserCombinators.Incremental.LeftBiasedLocal, Text.ParserCombinators.Incremental.Symmetric,
                      Control.Applicative.Monoid
   default-language:  Haskell2010
+
+benchmark CSV
+  type: exitcode-stdio-1.0
+  hs-source-dirs: Benchmarks
+  ghc-options: -O2 -Wall -rtsopts
+  main-is: CSV.hs
+  Build-Depends:     base < 5, monoid-subclasses < 0.5, incremental-parser,
+                     bytestring >= 0.10.4.0, criterion >= 1.0, deepseq >= 1.1, text >= 1.1.1.0
