@@ -1,5 +1,5 @@
 {- 
-    Copyright 2010-2011 Mario Blazevic
+    Copyright 2010-2015 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
@@ -30,7 +30,7 @@ module Text.ParserCombinators.Incremental.Symmetric (
 )
 where
 
-import Control.Applicative (Alternative (empty, (<|>)))
+import Control.Applicative (Alternative (empty, (<|>)), many, some)
 import Control.Monad (MonadPlus (mzero, mplus))
 import Data.Monoid (Monoid)
 
@@ -46,6 +46,8 @@ type Parser s r = Incremental.Parser Symmetric s r
 instance Monoid s => Alternative (Incremental.Parser Symmetric s) where
    empty = failure
    p1 <|> p2 = p1 <||> p2
+   many = defaultMany
+   some = defaultSome
 
 -- | The 'MonadPlus' instances are the same as the 'Alternative' instances.
 instance Monoid s => MonadPlus (Incremental.Parser Symmetric s) where

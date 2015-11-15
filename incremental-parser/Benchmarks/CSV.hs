@@ -1,4 +1,4 @@
-{-# Language FlexibleContexts, OverloadedStrings #-}
+{-# Language FlexibleContexts, OverloadedStrings, ExistentialQuantification #-}
 module Main (main, parseWhole, parseChunked) where
 
 import Prelude hiding (splitAt)
@@ -65,51 +65,50 @@ field = quotedField <|> unquotedField
 record :: TextualMonoid t => Parser t [t]
 record = field `sepBy1` char ','
 
-file :: TextualMonoid t => Parser t [[t]]
-file = (:) <$> record
-       <*> manyTill (lineEnd *> ((:[]) <$> record))
-                    (endOfInput <|> lineEnd *> endOfInput)
-                    <?> "file"
+file1 :: TextualMonoid t => Parser t [[t]]
+file1 = (:) <$> record
+        <*> manyTill (lineEnd *> ((:[]) <$> record))
+                     (moptional lineEnd *> endOfInput)
+        <?> "file"
 
-parseWhole :: TextualMonoid t => t -> [([[t]], t)]
-parseWhole s = completeResults (feedEof $ feed s file)
+file2 :: TextualMonoid t => Parser t [[t]]
+file2 = (:) <$> record
+        <*> many (notFollowedBy (moptional lineEnd *> endOfInput)
+                  >< lineEnd *> record)
+        <?> "file"
 
-parseChunked :: TextualMonoid t => Int -> t -> [([[t]], t)]
-parseChunked chunkLength s = completeResults (feedEof $ foldl' (flip feed) file $ splitAt chunkLength s)
+parseWhole :: TextualMonoid t => Parser t [[t]] -> t -> [([[t]], t)]
+parseWhole file s = completeResults (feedEof $ feed s file)
 
-parseIncremental :: (Monoid r, TextualMonoid t) => ([[t]] -> r) -> Int -> t -> r
-parseIncremental process chunkLength s = let (inc, p) = foldl' feedInc (mempty, file) (splitAt chunkLength s)
-                                         in case completeResults (feedEof p)
-                                            of [] -> inc
-                                               (r,_):_ -> inc <> process r
+parseChunked :: TextualMonoid t => Parser t [[t]] -> Int -> t -> [([[t]], t)]
+parseChunked file chunkLength s = completeResults (feedEof $ foldl' (flip feed) file $ splitAt chunkLength s)
+
+parseIncremental :: (Monoid r, TextualMonoid t) => Parser t [[t]] -> ([[t]] -> r) -> Int -> t -> r
+parseIncremental file process chunkLength s = let (inc, p) = foldl' feedInc (mempty, file) (splitAt chunkLength s)
+                                              in case completeResults (feedEof p)
+                                                 of [] -> inc
+                                                    (r,_):_ -> inc <> process r
    where feedInc (inc, p) chunk = let (prefix, p') = resultPrefix (feed chunk p)
                                   in (inc <> process prefix, p')
 
 chunkSize :: Int
 chunkSize = 1024
 
+data Input = forall t. (NFData t, TextualMonoid t) => Input String t
+
 main :: IO ()
 main = do
    airportsS <- readFile "Benchmarks/airports.dat"
    airportsT <- T.readFile "Benchmarks/airports.dat"
    airportsB <- B.readFile "Benchmarks/airports.dat"
+   let inputs = [Input "UTF8" (ByteStringUTF8 airportsB),
+                 Input "Text" airportsT,
+                 Input "Concat String" (pure airportsS :: Concat String)]
    defaultMain [
-      bgroup "whole" [
-         bench "UTF8" $ nf parseWhole (ByteStringUTF8 airportsB),
-         bench "Text" $ nf parseWhole airportsT,
-         bench "Concat Text" $ nf parseWhole (pure airportsT :: Concat T.Text),
-         bench "Concat String" $ nf parseWhole (pure airportsS :: Concat String)
-      ],
-      bgroup "chunked" [
-         bench "UTF8" $ nf (parseChunked chunkSize) (ByteStringUTF8 airportsB),
-         bench "Text" $ nf (parseChunked chunkSize) airportsT,
-         bench "Concat Text" $ nf (parseChunked chunkSize) (pure airportsT :: Concat T.Text),
-         bench "Concat String" $ nf (parseChunked chunkSize) (pure airportsS :: Concat String)
-      ],
-      bgroup "incremental" [
-         bench "UTF8" $ nf (parseIncremental id chunkSize) (ByteStringUTF8 airportsB),
-         bench "Text" $ nf (parseIncremental id chunkSize) airportsT,
-         bench "Concat Text" $ nf (parseIncremental id chunkSize) (pure airportsT :: Concat T.Text),
-         bench "Concat String" $ nf (parseIncremental id chunkSize) (pure airportsS :: Concat String)
-      ]
-    ]
+      bgroup inputName [
+         bgroup parserName [
+            bench "whole" $ nf (parseWhole p) i,
+            bench "chunked" $ nf (parseChunked p chunkSize) i,
+            bench "incremental" $ nf (parseIncremental p id chunkSize) i]
+            | (parserName, p) <- [("manyTill", file1), ("many", file2)]]
+         | Input inputName i <- inputs]

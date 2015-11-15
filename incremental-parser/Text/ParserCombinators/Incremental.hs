@@ -35,9 +35,9 @@ module Text.ParserCombinators.Incremental (
    satisfyChar, takeCharsWhile, takeCharsWhile1,
    -- * Parser combinators
    count, skip, moptional, concatMany, concatSome, manyTill,
-   mapType, mapIncremental, (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen,
+   mapType, mapIncremental, (<+*>), (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen,
    -- * Utilities
-   isInfallible, showWith
+   isInfallible, showWith, defaultMany, defaultSome
    )
 where
 
@@ -204,6 +204,18 @@ p1 <<|> p2 = if isInfallible p2 then ResultPart id e f else Delay e f
    where e = feedEof p1 <<|> feedEof p2
          f s = feed s p1 <<|> feed s p2
 
+defaultMany :: (Monoid s, Alternative (Parser t s)) => Parser t s r -> Parser t s [r]
+defaultMany = fst . defaultManySome
+
+defaultSome :: (Monoid s, Alternative (Parser t s)) => Parser t s r -> Parser t s [r]
+defaultSome = snd . defaultManySome
+
+defaultManySome :: (Monoid s, Alternative (Parser t s)) => Parser t s r -> (Parser t s [r], Parser t s [r])
+defaultManySome p = (many, some)
+   where many = resultPart id (some <|> pure [])
+         some = (:) <$> p <+*> many
+{-# INLINE defaultManySome #-}
+
 -- instance (Monoid s, Monoid r, Show s, Show r) => Show (Parser t s r) where
 --    show = showWith (show . ($ mempty)) show
 
@@ -248,6 +260,12 @@ resultPart _ Failure{} = error "Internal contradiction"
 resultPart f (Result t r) = Result t (f r)
 resultPart r1 (ResultPart r2 e f) = ResultPart (r1 . r2) e f
 resultPart r p = ResultPart r (feedEof p) (flip feed p)
+
+-- | A version of the Applicative's '<*>' operator specialized to return incremental parsing results.
+infixl 4 <+*>
+(<+*>) :: Monoid s => Parser t s (r -> r) -> Parser t s r -> Parser t s r
+Result t r <+*> p = resultPart r (feed t p)
+p1 <+*> p2 = apply (<+*> p2) p1
 
 isInfallible :: Parser t s r -> Bool
 isInfallible Result{} = True
