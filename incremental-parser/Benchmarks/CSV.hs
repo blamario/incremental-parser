@@ -1,21 +1,22 @@
-{-# Language FlexibleContexts, OverloadedStrings, ExistentialQuantification #-}
+{-# LANGUAGE Haskell2010, BangPatterns, ExistentialQuantification, FlexibleContexts, OverloadedStrings,
+  ScopedTypeVariables #-}
+
 module Main (main, parseWhole, parseChunked) where
 
-import Prelude hiding (splitAt)
+import Prelude hiding (null, splitAt)
 import Control.Applicative (Alternative, (<|>), many)
 import Control.Monad (void)
 import Data.Foldable (foldl')
 import Data.Monoid ((<>))
 import Data.Monoid.Textual (TextualMonoid)
-import Data.Monoid.Factorial (splitAt)
-import Data.Monoid.Null (MonoidNull)
+import Data.Monoid.Factorial (FactorialMonoid (splitAt))
+import Data.Monoid.Null (MonoidNull (null))
 import Text.ParserCombinators.Incremental.LeftBiasedLocal
 
 import Control.DeepSeq (NFData(..))
 import Criterion.Main (bench, bgroup, defaultMain, nf)
    
 import qualified Data.ByteString as B
-import qualified Data.Text as T
 import qualified Data.Text.IO as T
 
 import Data.Monoid.Instances.ByteString.UTF8 (ByteStringUTF8(ByteStringUTF8))
@@ -65,31 +66,38 @@ field = quotedField <|> unquotedField
 record :: TextualMonoid t => Parser t [t]
 record = field `sepBy1` char ','
 
+
+-- file1 is not incremental because it's fallible
 file1 :: TextualMonoid t => Parser t [[t]]
 file1 = (:) <$> record
-        <*> manyTill (lineEnd *> ((:[]) <$> record))
-                     (moptional lineEnd *> endOfInput)
+        <+*> manyTill (lineEnd *> ((:[]) <$> record))
+                      (moptional lineEnd *> endOfInput)
         <?> "file"
 
-file2 :: TextualMonoid t => Parser t [[t]]
+file2 :: forall t. TextualMonoid t => Parser t [[t]]
 file2 = (:) <$> record
-        <*> many (notFollowedBy (moptional lineEnd *> endOfInput)
-                  >< lineEnd *> record)
+        <+*> many ((notFollowedBy (moptional lineEnd *> endOfInput) :: Parser t ())
+                  *> lineEnd *> record)
         <?> "file"
 
 parseWhole :: TextualMonoid t => Parser t [[t]] -> t -> [([[t]], t)]
-parseWhole file s = completeResults (feedEof $ feed s file)
+parseWhole p s = completeResults (feedEof $ feed s p)
 
-parseChunked :: TextualMonoid t => Parser t [[t]] -> Int -> t -> [([[t]], t)]
-parseChunked file chunkLength s = completeResults (feedEof $ foldl' (flip feed) file $ splitAt chunkLength s)
+parseChunked :: TextualMonoid t => Parser t [[t]] -> [t] -> [([[t]], t)]
+parseChunked p chunks = completeResults (feedEof $ foldl' (flip feed) p $ chunks)
 
-parseIncremental :: (Monoid r, TextualMonoid t) => Parser t [[t]] -> ([[t]] -> r) -> Int -> t -> r
-parseIncremental file process chunkLength s = let (inc, p) = foldl' feedInc (mempty, file) (splitAt chunkLength s)
-                                              in case completeResults (feedEof p)
-                                                 of [] -> inc
-                                                    (r,_):_ -> inc <> process r
-   where feedInc (inc, p) chunk = let (prefix, p') = resultPrefix (feed chunk p)
-                                  in (inc <> process prefix, p')
+parseIncremental :: (Monoid r, TextualMonoid t) => Parser t [[t]] -> ([[t]] -> r) -> [t] -> r
+parseIncremental p0 process chunks = let (inc, p') = foldl' feedInc (mempty, p0) chunks
+                                     in case completeResults (feedEof p')
+                                        of [] -> inc
+                                           (r,_):_ -> inc <> process r
+   where feedInc (!inc, !p) chunk = let !(prefix, p') = resultPrefix (feed chunk p)
+                                    in (inc <> process prefix, p')
+
+chunksOf :: FactorialMonoid t => Int -> t -> [t]
+chunksOf len t
+   | null t = []
+   | (h, t') <- splitAt len t = h : chunksOf len t'
 
 chunkSize :: Int
 chunkSize = 1024
@@ -105,10 +113,12 @@ main = do
                  Input "Text" airportsT,
                  Input "Concat String" (pure airportsS :: Concat String)]
    defaultMain [
-      bgroup inputName [
+      let chunks = chunksOf chunkSize i
+      in nf id chunks `seq` bgroup inputName [
          bgroup parserName [
             bench "whole" $ nf (parseWhole p) i,
-            bench "chunked" $ nf (parseChunked p chunkSize) i,
-            bench "incremental" $ nf (parseIncremental p id chunkSize) i]
+            bench "chunked" $ nf (parseChunked p) chunks,
+            bench "incremental" $ nf (parseIncremental p id) chunks,
+            bench "incremental'" $ nf (parseIncremental p (pure :: a -> Concat a)) chunks]
             | (parserName, p) <- [("manyTill", file1), ("many", file2)]]
          | Input inputName i <- inputs]
