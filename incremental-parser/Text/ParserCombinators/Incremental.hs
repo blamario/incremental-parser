@@ -152,6 +152,9 @@ instance Monoid s => Monad (Parser t s) where
    (>>) = (*>)
 
 instance Monoid s => MonoidApplicative (Parser t s) where
+   -- | The '<+*>' operator is specialized to return incremental parsing results.
+   Result t r <+*> p = resultPart r (feed t p)
+   p1 <+*> p2 = apply (<+*> p2) p1
    -- | Join operator on two parsers of the same type, preserving the incremental results.
    _ >< p@Failure{} = p
    p1 >< p2 | isInfallible p2 = appendIncremental p1 p2
@@ -260,12 +263,6 @@ resultPart _ Failure{} = error "Internal contradiction"
 resultPart f (Result t r) = Result t (f r)
 resultPart r1 (ResultPart r2 e f) = ResultPart (r1 . r2) e f
 resultPart r p = ResultPart r (feedEof p) (flip feed p)
-
--- | A version of the Applicative's '<*>' operator specialized to return incremental parsing results.
-infixl 4 <+*>
-(<+*>) :: Monoid s => Parser t s (r -> r) -> Parser t s r -> Parser t s r
-Result t r <+*> p = resultPart r (feed t p)
-p1 <+*> p2 = apply (<+*> p2) p1
 
 isInfallible :: Parser t s r -> Bool
 isInfallible Result{} = True

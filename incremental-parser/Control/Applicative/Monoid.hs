@@ -21,15 +21,20 @@ module Control.Applicative.Monoid (
    )
 where
 
-import Control.Applicative (Applicative (pure), Alternative ((<|>), some, many), liftA2)
+import Control.Applicative (Applicative (pure, (<*>)), Alternative ((<|>), some, many), liftA2)
 import Data.Monoid (Monoid, mempty, mappend, mconcat)
 
 
 class Applicative f => MonoidApplicative f where
+   -- | A variant of the Applicative's '<*>' operator specialized for endomorphic combinators.
+   infixl 4 <+*>
+   (<+*>) :: f (a -> a) -> f a -> f a
+   (<+*>) = (<*>)
+
    -- | Lifted and potentially optimized monoid `mappend` operation from the parameter type.
    infixl 5 ><
    (><) :: Monoid a => f a -> f a -> f a
-   (><) = liftA2 mappend
+   a >< b = mappend <$> a <+*> b
 
 class (Alternative f, MonoidApplicative f) => MonoidAlternative f where
    -- | Like 'optional', but restricted to 'Monoid' results.
@@ -38,8 +43,13 @@ class (Alternative f, MonoidApplicative f) => MonoidAlternative f where
 
    -- | Zero or more argument occurrences like 'many', but concatenated.
    concatMany :: Monoid a => f a -> f a
-   concatMany = fmap mconcat . many
+   concatMany x = many'
+      where many' = some' <|> pure mempty
+            some' = x >< many'
 
    -- | One or more argument occurrences like 'some', but concatenated.
    concatSome :: Monoid a => f a -> f a
-   concatSome = fmap mconcat . some
+   concatSome x = some'
+      where many' = some' <|> pure mempty
+            some' = x >< many'
+   {-# MINIMAL #-}
