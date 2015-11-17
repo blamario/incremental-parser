@@ -394,10 +394,10 @@ skip :: (Monoid s, Monoid r) => Parser t s r' -> Parser t s r
 skip p = p *> mempty
 
 -- | Repeats matching the first argument until the second one succeeds.
-manyTill :: (Alternative (Parser t s), Monoid s, Monoid r) => Parser t s r -> Parser t s r' -> Parser t s r
+manyTill :: (Monoid s, Monoid r) => Parser t s r -> Parser t s r' -> Parser t s r
 manyTill next end = if isInfallible next then t1 else t2
-   where t1 = skip end <|> appendIncremental next t1
-         t2 = skip end <|> append next t2
+   where t1 = skip end <<|> appendIncremental next t1
+         t2 = skip end <<|> append next t2
 
 -- | A parser that accepts all input.
 acceptAll :: Monoid s => Parser t s s
