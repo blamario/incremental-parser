@@ -26,7 +26,6 @@ Library
                      Text.ParserCombinators.Incremental.LeftBiasedLocal, Text.ParserCombinators.Incremental.Symmetric,
                      Control.Applicative.Monoid
   Build-Depends:     base < 5, monoid-subclasses < 0.5
-  GHC-prof-options:  -auto-all
   if impl(ghc >= 7.0.0)
      default-language: Haskell2010
 
