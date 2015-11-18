@@ -1,5 +1,5 @@
-{- 
-    Copyright 2011 Mario Blazevic
+{-
+    Copyright 2011-2015 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
@@ -27,14 +27,14 @@ import Data.Monoid (Monoid, mempty, mappend, mconcat)
 
 class Applicative f => MonoidApplicative f where
    -- | A variant of the Applicative's '<*>' operator specialized for endomorphic combinators.
-   infixl 4 <+*>
-   (<+*>) :: f (a -> a) -> f a -> f a
-   (<+*>) = (<*>)
+   infixl 4 +<*>
+   (+<*>) :: f (a -> a) -> f a -> f a
+   (+<*>) = (<*>)
 
    -- | Lifted and potentially optimized monoid `mappend` operation from the parameter type.
    infixl 5 ><
    (><) :: Monoid a => f a -> f a -> f a
-   a >< b = mappend <$> a <+*> b
+   a >< b = mappend <$> a +<*> b
 
 class (Alternative f, MonoidApplicative f) => MonoidAlternative f where
    -- | Like 'optional', but restricted to 'Monoid' results.

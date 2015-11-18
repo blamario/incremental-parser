@@ -1,4 +1,4 @@
-{- 
+{-
     Copyright 2010-2015 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
@@ -35,7 +35,7 @@ module Text.ParserCombinators.Incremental (
    satisfyChar, takeCharsWhile, takeCharsWhile1,
    -- * Parser combinators
    count, skip, moptional, concatMany, concatSome, manyTill,
-   mapType, mapIncremental, (<+*>), (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen,
+   mapType, mapIncremental, (+<*>), (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen,
    -- * Utilities
    isInfallible, showWith, defaultMany, defaultSome
    )
@@ -152,9 +152,9 @@ instance Monoid s => Monad (Parser t s) where
    (>>) = (*>)
 
 instance Monoid s => MonoidApplicative (Parser t s) where
-   -- | The '<+*>' operator is specialized to return incremental parsing results.
-   Result s r <+*> p = resultPart r (feed s p)
-   p1 <+*> p2 = apply (<+*> p2) p1
+   -- | The '+<*>' operator is specialized to return incremental parsing results.
+   Result s r +<*> p = resultPart r (feed s p)
+   p1 +<*> p2 = apply (+<*> p2) p1
    -- | Join operator on two parsers of the same type, preserving the incremental results.
    _ >< p@Failure{} = p
    p1 >< p2 | isInfallible p2 = appendIncremental p1 p2
@@ -216,7 +216,7 @@ defaultSome = snd . defaultManySome
 defaultManySome :: (Monoid s, Alternative (Parser t s)) => Parser t s r -> (Parser t s [r], Parser t s [r])
 defaultManySome p = (many, some)
    where many = resultPart id (some <|> pure [])
-         some = (:) <$> p <+*> many
+         some = (:) <$> p +<*> many
 {-# INLINE defaultManySome #-}
 
 -- instance (Monoid s, Monoid r, Show s, Show r) => Show (Parser t s r) where

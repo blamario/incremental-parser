@@ -1,3 +1,19 @@
+{-
+    Copyright 2010-2015 Mario Blazevic
+
+    This file is part of the Streaming Component Combinators (SCC) project.
+
+    The SCC project is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
+    License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later
+    version.
+
+    SCC is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty
+    of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along with SCC.  If not, see
+    <http://www.gnu.org/licenses/>.
+-}
+
 {-# LANGUAGE Haskell2010, BangPatterns, ExistentialQuantification, FlexibleContexts, OverloadedStrings,
   ScopedTypeVariables #-}
 
@@ -70,13 +86,13 @@ record = field `sepBy1` char ','
 -- file1 is not incremental because it's fallible
 file1 :: TextualMonoid t => Parser t [[t]]
 file1 = (:) <$> record
-        <+*> manyTill (lineEnd *> ((:[]) <$> record))
+        +<*> manyTill (lineEnd *> ((:[]) <$> record))
                       (moptional lineEnd *> endOfInput)
         <?> "file"
 
 file2 :: forall t. TextualMonoid t => Parser t [[t]]
 file2 = (:) <$> record
-        <+*> many ((notFollowedBy (moptional lineEnd *> endOfInput) :: Parser t ())
+        +<*> many ((notFollowedBy (moptional lineEnd *> endOfInput) :: Parser t ())
                   *> lineEnd *> record)
         <?> "file"
 
