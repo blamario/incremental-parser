@@ -23,7 +23,7 @@ import Prelude hiding (null, splitAt)
 import Control.Applicative (Alternative, (<$>), (<*>), (<*), (*>), (<|>), many, pure)
 import Control.Monad (void)
 import Data.Foldable (foldl')
-import Data.Monoid (Monoid, (<>), mappend, mconcat, mempty)
+import Data.Monoid (Monoid, (<>), mappend, mempty)
 import Data.Monoid.Textual (TextualMonoid)
 import Data.Monoid.Factorial (FactorialMonoid (splitAt))
 import Data.Monoid.Null (MonoidNull (null))
@@ -64,8 +64,7 @@ unquotedField = takeCharsWhile (`notElem` (",\n\r\"" :: [Char]))
 
 insideQuotes :: TextualMonoid t => Parser t t
 insideQuotes = mappend <$> takeCharsWhile (/= '"')
-               <*> (mconcat
-                    <$> many (mappend <$> dquotes <*> insideQuotes))
+               <*> concatMany (mappend <$> dquotes <*> insideQuotes)
                <?> "inside of double quotes"
 
    where dquotes = string "\"\"" >> return "\""
