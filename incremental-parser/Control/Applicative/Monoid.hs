@@ -21,7 +21,7 @@ module Control.Applicative.Monoid (
    )
 where
 
-import Control.Applicative (Applicative (pure, (<*>)), Alternative ((<|>), some, many), liftA2)
+import Control.Applicative (Applicative (pure, (<*>)), Alternative ((<|>), some, many), (<$>))
 import Data.Monoid (Monoid, mempty, mappend, mconcat)
 
 

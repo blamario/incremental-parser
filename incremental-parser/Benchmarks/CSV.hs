@@ -20,10 +20,10 @@
 module Main (main, parseWhole, parseChunked) where
 
 import Prelude hiding (null, splitAt)
-import Control.Applicative (Alternative, (<|>), many)
+import Control.Applicative (Alternative, (<$>), (<*>), (<*), (*>), (<|>), many, pure)
 import Control.Monad (void)
 import Data.Foldable (foldl')
-import Data.Monoid ((<>))
+import Data.Monoid (Monoid, (<>), mappend, mconcat, mempty)
 import Data.Monoid.Textual (TextualMonoid)
 import Data.Monoid.Factorial (FactorialMonoid (splitAt))
 import Data.Monoid.Null (MonoidNull (null))

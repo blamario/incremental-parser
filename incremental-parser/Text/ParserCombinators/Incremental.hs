@@ -42,7 +42,7 @@ module Text.ParserCombinators.Incremental (
 where
 
 import Prelude hiding (and, null, span, takeWhile)
-import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative ((<|>)))
+import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative ((<|>)), (<$>))
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
 import Data.Maybe (fromMaybe)
