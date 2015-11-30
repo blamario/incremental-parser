@@ -14,7 +14,7 @@
     <http://www.gnu.org/licenses/>.
 -}
 
--- | This module defines incremental parsers. 
+-- | This module defines parsing combinators for incremental parsers with left-biased local choice.
 -- 
 -- The exported 'Parser' type can provide partial parsing results from partial input, as long as the output is a
 -- 'Monoid'. Construct a parser using the primitives and combinators, supply it with input using functions 'feed' and

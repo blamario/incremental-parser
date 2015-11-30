@@ -14,7 +14,9 @@
     <http://www.gnu.org/licenses/>.
 -}
 
--- | This module defines the AlternativeMonoid class
+-- | This module defines the 'MonoidApplicative' and 'MonoidAlternative' type classes. Their methods are specialized
+-- forms of the standard 'Applicative' and 'Alternative' class methods. Instances of these classes should override the
+-- default method implementations with more efficient ones.
 
 module Control.Applicative.Monoid (
    MonoidApplicative(..), MonoidAlternative(..)
@@ -26,7 +28,7 @@ import Data.Monoid (Monoid, mempty, mappend, mconcat)
 
 
 class Applicative f => MonoidApplicative f where
-   -- | A variant of the Applicative's '<*>' operator specialized for endomorphic combinators.
+   -- | A variant of the Applicative's '<*>' operator specialized for endomorphic functions.
    infixl 4 +<*>
    (+<*>) :: f (a -> a) -> f a -> f a
    (+<*>) = (<*>)
@@ -52,4 +54,3 @@ class (Alternative f, MonoidApplicative f) => MonoidAlternative f where
    concatSome x = some'
       where many' = some' <|> pure mempty
             some' = x >< many'
-   {-# MINIMAL #-}

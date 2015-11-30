@@ -14,11 +14,15 @@
     <http://www.gnu.org/licenses/>.
 -}
 
--- | This module defines incremental parsers. 
+-- | This module defines parsing combinators for incremental parsers.
 -- 
 -- The exported 'Parser' type can provide partial parsing results from partial input, as long as the output is a
 -- 'Monoid'. Construct a parser using the primitives and combinators, supply it with input using functions 'feed' and
 -- 'feedEof', and extract the parsed output using 'results'.
+-- 
+-- If your parser only ever uses the symmetric choice '<||>', import the "Text.ParserCombinators.Incremental.Symmetric"
+-- module instead. Vice versa, if you always use the shortcutting '<<|>' choice, import
+-- "Text.ParserCombinators.Incremental.LeftBiasedLocal" instead of this module.
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
@@ -128,7 +132,7 @@ instance Monoid s => Functor (Parser t s) where
    fmap g (ResultPart r e f) = ResultPart id (fmap g $ prepend r $ feedEof e) (fmap g . prepend r . f)
    fmap f p = apply (fmap f) p
 
--- | The '<*>' combinator requires its both arguments to provide complete parsing results, takeWhile '*>' and '<*'
+-- | The '<*>' combinator requires its both arguments to provide complete parsing results, whereas '*>' and '<*'
 -- preserve the incremental results.
 instance Monoid s => Applicative (Parser t s) where
    pure = Result mempty
@@ -151,8 +155,8 @@ instance Monoid s => Monad (Parser t s) where
    p >>= f = apply (>>= f) p
    (>>) = (*>)
 
+-- | The '+<*>' operator is specialized to return incremental parsing results.
 instance Monoid s => MonoidApplicative (Parser t s) where
-   -- | The '+<*>' operator is specialized to return incremental parsing results.
    Result s r +<*> p = resultPart r (feed s p)
    p1 +<*> p2 = apply (+<*> p2) p1
    -- | Join operator on two parsers of the same type, preserving the incremental results.
@@ -294,7 +298,7 @@ mapType g (Delay e f) = Delay (g e) (g . f)
 more :: (s -> Parser t s r) -> Parser t s r
 more = Delay (Failure "more")
 
--- | A parser that fails on any input and succeeds at its end.
+-- | A parser that fails on any non-empty input and succeeds at its end.
 eof :: (MonoidNull s, Monoid r) => Parser t s r
 eof = Delay mempty (\s-> if null s then eof else Failure "eof")
 
@@ -396,7 +400,7 @@ manyTill next end = if isInfallible next then t1 else t2
    where t1 = skip end <<|> appendIncremental next t1
          t2 = skip end <<|> append next t2
 
--- | A parser that accepts all input.
+-- | A parser that accepts and consumes all input.
 acceptAll :: Monoid s => Parser t s s
 acceptAll = ResultPart id mempty f
    where f s = ResultPart (mappend s) mempty f
