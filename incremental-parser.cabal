@@ -1,25 +1,26 @@
 Name:                incremental-parser
-Version:             0.2.4
+Version:             0.2.4.1
 Cabal-Version:       >= 1.10
 Build-Type:          Simple
 Synopsis:            Generic parser library capable of providing partial results from partial input.
 Category:            Parsing
 Tested-with:         GHC
 Description:
-  This package defines yet another parser library. This one is implemented using the concept of Brzozowski derivatives,
-  tweaked and optimized to work with any monoidal input type. Lists, ByteString, and Text are supported out of the box,
-  as well as any other data type for which the monoid-subclasses package defines instances.
-  If the parser result is also a monoid, the parser can provide it incrementally, before the complete input is parsed.
+
+  This package defines yet another parser combinator library. This one is implemented using the concept of Brzozowski
+  derivatives, tweaked and optimized to work with any monoidal input type. Lists, ByteString, and Text are supported out
+  of the box, as well as any other data type for which the monoid-subclasses package defines instances. If the parser
+  result is also a monoid, its chunks can be extracted incrementally, before the complete input is parsed.
   
 License:             GPL
 License-file:        LICENSE.txt
 Copyright:           (c) 2011-2015 Mario Blazevic
 Author:              Mario Blazevic
 Maintainer:          blamario@yahoo.com
-Homepage:            http://patch-tag.com/r/blamario/incremental-parser/wiki/
+Homepage:            https://github.com/blamario/incremental-parser
 Source-repository head
-  type:              darcs
-  location:          http://code.haskell.org/SCC/
+  type:              git
+  location:          https://github.com/blamario/incremental-parser
 
 Library
   Exposed-Modules:   Text.ParserCombinators.Incremental,
@@ -46,5 +47,6 @@ benchmark CSV
   hs-source-dirs: Benchmarks
   ghc-options: -O2 -Wall -rtsopts
   main-is: CSV.hs
+  data-files:        Benchmarks/airports.dat
   Build-Depends:     base < 5, monoid-subclasses < 0.5, incremental-parser,
                      bytestring >= 0.10.4.0, criterion >= 1.0, deepseq >= 1.1, text >= 1.1.1.0
