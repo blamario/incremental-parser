@@ -1,5 +1,5 @@
 {-
-    Copyright 2010-2015 Mario Blazevic
+    Copyright 2010-2016 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
@@ -36,7 +36,7 @@ import qualified Data.ByteString as B
 import qualified Data.Text.IO as T
 
 import Data.Monoid.Instances.ByteString.UTF8 (ByteStringUTF8(ByteStringUTF8))
-import Data.Monoid.Instances.Concat (Concat(extract))
+import Data.Monoid.Instances.Concat (Concat, extract)
 
 instance NFData ByteStringUTF8 where
   rnf (ByteStringUTF8 b) = rnf b
