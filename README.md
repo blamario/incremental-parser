@@ -10,8 +10,10 @@ result is then a concatenation of the partial results.
 In order to make the incremental parsing easier, the combinator set is optimized for monoidal results. Apart from the
 usual combinators `many` and `some`, for example, there are `concatMany` and `concatSome` operators.
 
+```haskell
     many :: Parser s r -> Parser s [r]
     concatMany :: (Monoid s, Monoid r) => Parser s r -> Parser s r
+```
 
 #### Arbitrary monoidal inputs
 
@@ -22,21 +24,27 @@ the [monoid-subclasses](http://hackage.haskell.org/package/monoid-subclasses) pa
 
 In Parsec:
 
+```haskell
     string :: Stream s m Char => String -> ParsecT s u m String
     char :: Stream s m Char => Char -> ParsecT s u m Char
     anyToken :: (Stream s m t, Show t) => ParsecT s u m t
+```
 
 In Attoparsec:
 
+```haskell
     string :: ByteString -> Parser ByteString
     word8 :: Word8 -> Parser Word8
     anyWord8 :: Parser Word8
+```
 
 In incremental-parser and Picoparsec:
 
+```haskell
     string :: (LeftCancellativeMonoid s, MonoidNull s) => s -> Parser s s
     token :: (Eq s, FactorialMonoid s) => s -> Parser s s
     anyToken :: FactorialMonoid s => Parser s s
+```
 
 #### Two `Alternative` alternatives
 
