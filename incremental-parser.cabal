@@ -1,5 +1,5 @@
 Name:                incremental-parser
-Version:             0.2.5.2
+Version:             0.2.5.3
 Cabal-Version:       >= 1.10
 Build-Type:          Simple
 Synopsis:            Generic parser library capable of providing partial results from partial input.
@@ -38,7 +38,7 @@ test-suite Main
   Default-Language:  Haskell2010
   Build-Depends:     base < 5, monoid-subclasses < 0.5,
                      QuickCheck >= 2 && < 3, checkers >= 0.3.2 && < 0.5,
-                     tasty >= 0.7 && < 0.13, tasty-quickcheck >= 0.7 && < 1.0
+                     tasty >= 0.7 && < 1.1, tasty-quickcheck >= 0.7 && < 1.0
   Main-is:           Test/TestIncrementalParser.hs
   Other-Modules:     Text.ParserCombinators.Incremental,
                      Text.ParserCombinators.Incremental.LeftBiasedLocal, Text.ParserCombinators.Incremental.Symmetric,
