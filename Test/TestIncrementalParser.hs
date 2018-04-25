@@ -1,5 +1,5 @@
 {- 
-    Copyright 2011-2015 Mario Blazevic
+    Copyright 2011-2018 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
@@ -24,6 +24,7 @@ import Control.Applicative (Applicative, Alternative, pure, (<*>), (*>), empty, 
 import Control.Monad (MonadPlus, liftM, liftM2, mzero, mplus)
 import Data.List (find, minimumBy, nub, sort)
 import Data.Monoid (Monoid(..))
+import Data.Semigroup (Semigroup(..))
 import System.Environment (getArgs)
 
 import Test.Tasty.QuickCheck (Arbitrary(..), Gen, Property, property, (==>), (.&&.), forAll, oneof, resize, sized, whenFail)
@@ -57,13 +58,19 @@ instance Show (TestParser a r) where
 instance (Arbitrary r, Monoid r, Show r) => Arbitrary (TestParser a r) where
    arbitrary = fmap TestParser arbitrary
 
+instance Semigroup a => Semigroup (Described a) where
+   Described d1 p1 <> Described d2 p2 = Described (d1 ++ " <> " ++ d2) (p1 <> p2)
+
 instance Monoid a => Monoid (Described a) where
    mempty = Described "mempty" mempty
-   Described d1 p1 `mappend` Described d2 p2 = Described (d1 ++ " `mappend` " ++ d2) (mappend p1 p2)
+   mappend = (<>)
+
+instance Semigroup r => Semigroup (TestParser a r) where
+   TestParser d1 <> TestParser d2 = TestParser (d1 <> d2)
 
 instance Monoid r => Monoid (TestParser a r) where
    mempty = TestParser mempty
-   TestParser d1 `mappend` TestParser d2 = TestParser (d1 `mappend` d2)
+   mappend = (<>)
 
 instance EqProp a => EqProp (Described a) where
    Described _ x =-= Described _ y = x =-= y
@@ -271,6 +278,9 @@ instance forall a r. (Arbitrary r, Monoid r, Show r) => Arbitrary (Described (Pa
 
 instance (Monoid r, Show r) => Show (Parser a [Bool] r) where
    show p = showWith (showBoolFun show) show p
+
+instance Semigroup Bool where
+   (<>) = (||)
 
 instance Monoid Bool where
    mempty = False

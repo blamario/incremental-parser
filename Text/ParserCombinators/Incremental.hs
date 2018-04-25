@@ -1,5 +1,5 @@
 {-
-    Copyright 2010-2015 Mario Blazevic
+    Copyright 2010-2018 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
@@ -50,7 +50,8 @@ import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative (
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
 import Data.Maybe (fromMaybe)
-import Data.Monoid (Monoid, mempty, mappend, (<>))
+import Data.Semigroup (Semigroup(..))
+import Data.Monoid (Monoid, mempty, mappend)
 import Data.Monoid.Cancellative (LeftReductiveMonoid (stripPrefix))
 import Data.Monoid.Factorial (FactorialMonoid (splitPrimePrefix), span)
 import Data.Monoid.Null (MonoidNull(null))
@@ -164,16 +165,19 @@ instance Monoid s => MonoidApplicative (Parser t s) where
    p1 >< p2 | isInfallible p2 = appendIncremental p1 p2
             | otherwise       = append p1 p2
 
-appendIncremental :: (Monoid s, Monoid r) => Parser t s r -> Parser t s r -> Parser t s r
-appendIncremental (Result s r) p = resultPart (mappend r) (feed s p)
+appendIncremental :: (Monoid s, Semigroup r) => Parser t s r -> Parser t s r -> Parser t s r
+appendIncremental (Result s r) p = resultPart (<> r) (feed s p)
 appendIncremental (ResultPart r e f) p2 = ResultPart r (appendIncremental e p2) (flip appendIncremental p2 . f)
 appendIncremental p1 p2 = apply (`appendIncremental` p2) p1
 
-append :: (Monoid s, Monoid r) => Parser t s r -> Parser t s r -> Parser t s r
-append (Result s r) p2 = prepend (mappend r) (feed s p2)
+append :: (Monoid s, Semigroup r) => Parser t s r -> Parser t s r -> Parser t s r
+append (Result s r) p2 = prepend (<> r) (feed s p2)
 append p1 p2 = apply (`append` p2) p1
 
 -- | Two parsers can be sequentially joined.
+instance (Monoid s, Semigroup r) => Semigroup (Parser t s r) where
+   (<>) = (><)
+
 instance (Monoid s, Monoid r) => Monoid (Parser t s r) where
    mempty = return mempty
    mappend = (><)

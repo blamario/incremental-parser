@@ -1,5 +1,5 @@
 {-
-    Copyright 2011-2015 Mario Blazevic
+    Copyright 2011-2018 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
@@ -25,6 +25,7 @@ where
 
 import Control.Applicative (Applicative (pure, (<*>)), Alternative ((<|>), some, many), (<$>))
 import Data.Monoid (Monoid, mempty, mappend, mconcat)
+import Data.Semigroup (Semigroup, (<>))
 
 
 class Applicative f => MonoidApplicative f where
@@ -35,8 +36,8 @@ class Applicative f => MonoidApplicative f where
 
    -- | Lifted and potentially optimized monoid `mappend` operation from the parameter type.
    infixl 5 ><
-   (><) :: Monoid a => f a -> f a -> f a
-   a >< b = mappend <$> a +<*> b
+   (><) :: Semigroup a => f a -> f a -> f a
+   a >< b = (<>) <$> a +<*> b
 
 class (Alternative f, MonoidApplicative f) => MonoidAlternative f where
    -- | Like 'optional', but restricted to 'Monoid' results.
