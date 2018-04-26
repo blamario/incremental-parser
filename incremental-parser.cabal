@@ -1,5 +1,5 @@
 Name:                incremental-parser
-Version:             0.3
+Version:             0.3.1
 Cabal-Version:       >= 1.10
 Build-Type:          Simple
 Synopsis:            Generic parser library capable of providing partial results from partial input.

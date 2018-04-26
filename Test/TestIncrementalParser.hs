@@ -55,20 +55,20 @@ instance Show (Described a) where
 instance Show (TestParser a r) where
    show (TestParser d) = show d
 
-instance (Arbitrary r, Monoid r, Show r) => Arbitrary (TestParser a r) where
+instance (Arbitrary r, Semigroup r, Monoid r, Show r) => Arbitrary (TestParser a r) where
    arbitrary = fmap TestParser arbitrary
 
 instance Semigroup a => Semigroup (Described a) where
    Described d1 p1 <> Described d2 p2 = Described (d1 ++ " <> " ++ d2) (p1 <> p2)
 
-instance Monoid a => Monoid (Described a) where
+instance (Semigroup a, Monoid a) => Monoid (Described a) where
    mempty = Described "mempty" mempty
    mappend = (<>)
 
 instance Semigroup r => Semigroup (TestParser a r) where
    TestParser d1 <> TestParser d2 = TestParser (d1 <> d2)
 
-instance Monoid r => Monoid (TestParser a r) where
+instance (Semigroup r, Monoid r) => Monoid (TestParser a r) where
    mempty = TestParser mempty
    mappend = (<>)
 
@@ -257,7 +257,7 @@ testJoin = ("join",
 
 canonicalResults p = sort $ nub $ completeResults p
 
-instance forall a r. (Arbitrary r, Monoid r, Show r) => Arbitrary (Described (Parser a [Bool] r)) where
+instance forall a r. (Arbitrary r, Semigroup r, Monoid r, Show r) => Arbitrary (Described (Parser a [Bool] r)) where
    arbitrary = sized $ 
                \n-> if n == 0
                     then return (Described "empty" failure)

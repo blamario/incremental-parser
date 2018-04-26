@@ -41,17 +41,17 @@ class Applicative f => MonoidApplicative f where
 
 class (Alternative f, MonoidApplicative f) => MonoidAlternative f where
    -- | Like 'optional', but restricted to 'Monoid' results.
-   moptional :: Monoid a => f a -> f a
+   moptional :: (Semigroup a, Monoid a) => f a -> f a
    moptional x = x <|> pure mempty
 
    -- | Zero or more argument occurrences like 'many', but concatenated.
-   concatMany :: Monoid a => f a -> f a
+   concatMany :: (Semigroup a, Monoid a) => f a -> f a
    concatMany x = many'
       where many' = some' <|> pure mempty
             some' = x >< many'
 
    -- | One or more argument occurrences like 'some', but concatenated.
-   concatSome :: Monoid a => f a -> f a
+   concatSome :: (Semigroup a, Monoid a) => f a -> f a
    concatSome x = some'
       where many' = some' <|> pure mempty
             some' = x >< many'

@@ -178,7 +178,7 @@ append p1 p2 = apply (`append` p2) p1
 instance (Monoid s, Semigroup r) => Semigroup (Parser t s r) where
    (<>) = (><)
 
-instance (Monoid s, Monoid r) => Monoid (Parser t s r) where
+instance (Monoid s, Monoid r, Semigroup r) => Monoid (Parser t s r) where
    mempty = return mempty
    mappend = (><)
 
@@ -187,7 +187,7 @@ instance (Alternative (Parser t s), Monoid s) => MonoidAlternative (Parser t s) 
    concatMany = fst . manies
    concatSome = snd . manies
 
-manies :: (Alternative (Parser t s), Monoid s, Monoid r) => Parser t s r -> (Parser t s r, Parser t s r)
+manies :: (Alternative (Parser t s), Monoid s, Monoid r, Semigroup r) => Parser t s r -> (Parser t s r, Parser t s r)
 manies p = (many, some)
    where many = resultPart id (some <|> mempty)
          some = appendIncremental p many
@@ -303,7 +303,7 @@ more :: (s -> Parser t s r) -> Parser t s r
 more = Delay (Failure "more")
 
 -- | A parser that fails on any non-empty input and succeeds at its end.
-eof :: (MonoidNull s, Monoid r) => Parser t s r
+eof :: (MonoidNull s, Monoid r, Semigroup r) => Parser t s r
 eof = Delay mempty (\s-> if null s then eof else Failure "eof")
 
 -- | A parser that accepts any single input atom.
@@ -337,7 +337,7 @@ satisfyChar predicate = p
                   Nothing -> p
 
 -- | A parser that consumes and returns the given prefix of the input.
-string :: (LeftReductiveMonoid s, MonoidNull s) => s -> Parser t s s
+string :: (LeftReductiveMonoid s, MonoidNull s, Semigroup s) => s -> Parser t s s
 string x | null x = mempty
 string x = more (\y-> case (stripPrefix x y, stripPrefix y x)
                       of (Just y', _) -> Result y' x
@@ -390,22 +390,22 @@ takeCharsWhile1 pred = more f
                                                         (feed suffix' $ takeCharsWhile pred)
 
 -- | Accepts the given number of occurrences of the argument parser.
-count :: (Monoid s, Monoid r) => Int -> Parser t s r -> Parser t s r
+count :: (Monoid s, Monoid r, Semigroup r) => Int -> Parser t s r -> Parser t s r
 count n p | n > 0 = p >< count (pred n) p
           | otherwise = mempty
 
 -- | Discards the results of the argument parser.
-skip :: (Monoid s, Monoid r) => Parser t s r' -> Parser t s r
+skip :: (Monoid s, Monoid r, Semigroup r) => Parser t s r' -> Parser t s r
 skip p = p *> mempty
 
 -- | Repeats matching the first argument until the second one succeeds.
-manyTill :: (Monoid s, Monoid r) => Parser t s r -> Parser t s r' -> Parser t s r
+manyTill :: (Monoid s, Monoid r, Semigroup r) => Parser t s r -> Parser t s r' -> Parser t s r
 manyTill next end = if isInfallible next then t1 else t2
    where t1 = skip end <<|> appendIncremental next t1
          t2 = skip end <<|> append next t2
 
 -- | A parser that accepts and consumes all input.
-acceptAll :: Monoid s => Parser t s s
+acceptAll :: (Semigroup s, Monoid s) => Parser t s s
 acceptAll = ResultPart id mempty f
    where f s = ResultPart (mappend s) mempty f
 
