@@ -49,6 +49,7 @@ import Prelude hiding (and, null, span, takeWhile)
 import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative ((<|>)), (<$>))
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
+import Control.Monad.Fail (MonadFail(fail))
 import Data.Maybe (fromMaybe)
 import Data.Semigroup (Semigroup(..))
 import Data.Monoid (Monoid, mempty, mappend)
@@ -155,6 +156,9 @@ instance Monoid s => Monad (Parser t s) where
    Result s r >>= f = feed s (f r)
    p >>= f = apply (>>= f) p
    (>>) = (*>)
+
+instance Monoid s => MonadFail (Parser t s) where
+   fail = Failure
 
 -- | The '+<*>' operator is specialized to return incremental parsing results.
 instance Monoid s => MonoidApplicative (Parser t s) where

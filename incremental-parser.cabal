@@ -1,5 +1,5 @@
 Name:                incremental-parser
-Version:             0.3.1.1
+Version:             0.3.2
 Cabal-Version:       >= 1.10
 Build-Type:          Simple
 Synopsis:            Generic parser library capable of providing partial results from partial input.
@@ -28,7 +28,7 @@ Library
   Exposed-Modules:   Text.ParserCombinators.Incremental,
                      Text.ParserCombinators.Incremental.LeftBiasedLocal, Text.ParserCombinators.Incremental.Symmetric,
                      Control.Applicative.Monoid
-  Build-Depends:     base < 5, monoid-subclasses < 0.5
+  Build-Depends:     base >= 4.9 && < 5, monoid-subclasses < 0.5
   if impl(ghc >= 7.0.0)
      default-language: Haskell2010
 
