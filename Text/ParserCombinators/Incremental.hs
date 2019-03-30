@@ -170,12 +170,12 @@ instance Monoid s => MonoidApplicative (Parser t s) where
             | otherwise       = append p1 p2
 
 appendIncremental :: (Monoid s, Semigroup r) => Parser t s r -> Parser t s r -> Parser t s r
-appendIncremental (Result s r) p = resultPart (<> r) (feed s p)
+appendIncremental (Result s r) p = resultPart (r <>) (feed s p)
 appendIncremental (ResultPart r e f) p2 = ResultPart r (appendIncremental e p2) (flip appendIncremental p2 . f)
 appendIncremental p1 p2 = apply (`appendIncremental` p2) p1
 
 append :: (Monoid s, Semigroup r) => Parser t s r -> Parser t s r -> Parser t s r
-append (Result s r) p2 = prepend (<> r) (feed s p2)
+append (Result s r) p2 = prepend (r <>) (feed s p2)
 append p1 p2 = apply (`append` p2) p1
 
 -- | Two parsers can be sequentially joined.
