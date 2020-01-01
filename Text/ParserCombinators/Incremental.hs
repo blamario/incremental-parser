@@ -26,7 +26,7 @@
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
-{-# LANGUAGE FlexibleContexts, UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, UndecidableInstances #-}
 
 module Text.ParserCombinators.Incremental (
    -- * The Parser type
@@ -50,6 +50,7 @@ import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative (
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
 import Control.Monad.Fail (MonadFail(fail))
+import Control.Monad.Fix (MonadFix(mfix))
 import Data.Maybe (fromMaybe)
 import Data.Semigroup (Semigroup(..))
 import Data.Monoid (Monoid, mempty, mappend)
@@ -58,6 +59,12 @@ import Data.Monoid.Factorial (FactorialMonoid, splitPrimePrefix, span)
 import Data.Monoid.Null (MonoidNull(null))
 import Data.Monoid.Textual (TextualMonoid)
 import qualified Data.Monoid.Textual as Textual
+import Text.Parser.Combinators (Parsing)
+import Text.Parser.Char (CharParsing)
+import Text.Parser.LookAhead (LookAheadParsing)
+import qualified Text.Parser.Combinators
+import qualified Text.Parser.Char
+import qualified Text.Parser.LookAhead
 
 -- | The central parser type. Its first parameter is the subtype of the parser, the second is the input monoid type, the
 -- third the output type.
@@ -160,6 +167,16 @@ instance Monoid s => Monad (Parser t s) where
 instance Monoid s => MonadFail (Parser t s) where
    fail = Failure
 
+instance Monoid s => MonadFix (Parser t s) where
+   mfix f = Delay fixEof fixInput
+      where fixEof = let r = f (atEof r) in r
+            fixInput s = mfix (feed s . f)
+            atEof (Result _ r) = r
+            atEof (ResultPart r e f) = r (atEof e)
+            atEof (Delay e f) = atEof e
+            atEof Failure{} = error "mfix on Failure"
+            atEof Choice{} = error "mfix on Choice"
+
 -- | The '+<*>' operator is specialized to return incremental parsing results.
 instance Monoid s => MonoidApplicative (Parser t s) where
    Result s r +<*> p = resultPart r (feed s p)
@@ -168,6 +185,22 @@ instance Monoid s => MonoidApplicative (Parser t s) where
    _ >< p@Failure{} = p
    p1 >< p2 | isInfallible p2 = appendIncremental p1 p2
             | otherwise       = append p1 p2
+
+instance (Alternative (Parser t s), MonoidNull s) => Parsing (Parser t s) where
+   try = id
+   (<?>) = const
+   notFollowedBy = notFollowedBy
+   skipMany = concatMany . skip
+   skipSome = concatSome . skip
+   eof = eof
+   unexpected = Failure
+
+instance (Alternative (Parser t s), MonoidNull s) => LookAheadParsing (Parser t s) where
+   lookAhead = lookAhead
+
+instance (Alternative (Parser t String)) => CharParsing (Parser t String) where
+   satisfy = fmap head . satisfyChar
+   string = string
 
 appendIncremental :: (Monoid s, Semigroup r) => Parser t s r -> Parser t s r -> Parser t s r
 appendIncremental (Result s r) p = resultPart (r <>) (feed s p)
