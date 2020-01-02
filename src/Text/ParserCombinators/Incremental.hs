@@ -1,5 +1,5 @@
 {-
-    Copyright 2010-2018 Mario Blazevic
+    Copyright 2010-2020 Mario Blazevic
 
     This file is part of the Streaming Component Combinators (SCC) project.
 
@@ -26,7 +26,7 @@
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, GADTs, UndecidableInstances #-}
 
 module Text.ParserCombinators.Incremental (
    -- * The Parser type
@@ -39,7 +39,7 @@ module Text.ParserCombinators.Incremental (
    satisfyChar, takeCharsWhile, takeCharsWhile1,
    -- * Parser combinators
    count, skip, moptional, concatMany, concatSome, manyTill,
-   mapType, mapIncremental, (+<*>), (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen,
+   mapType, mapIncremental, (+<*>), (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen, record,
    -- * Utilities
    isInfallible, showWith, defaultMany, defaultSome
    )
@@ -51,6 +51,8 @@ import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad (ap)
 import Control.Monad.Fail (MonadFail(fail))
 import Control.Monad.Fix (MonadFix(mfix))
+import Control.Monad.Trans.State.Strict (State, runState, state, StateT(StateT, runStateT))
+import Data.Functor.Identity (Identity(Identity))
 import Data.Maybe (fromMaybe)
 import Data.Semigroup (Semigroup(..))
 import Data.Monoid (Monoid, mempty, mappend)
@@ -65,14 +67,17 @@ import Text.Parser.LookAhead (LookAheadParsing)
 import qualified Text.Parser.Combinators
 import qualified Text.Parser.Char
 import qualified Text.Parser.LookAhead
+import qualified Rank2
 
 -- | The central parser type. Its first parameter is the subtype of the parser, the second is the input monoid type, the
 -- third the output type.
-data Parser t s r = Failure String
-                  | Result s r
-                  | ResultPart (r -> r) (Parser t s r) (s -> Parser t s r)
-                  | Delay (Parser t s r) (s -> Parser t s r)
-                  | Choice (Parser t s r) (Parser t s r)
+data Parser t s r where
+   Failure :: String -> Parser t s r
+   Result :: s -> r -> Parser t s r
+   ResultPart :: (r -> r) -> Parser t s r -> (s -> Parser t s r) -> Parser t s r
+   ResultStructure :: Rank2.Traversable g => g (Parser t s) -> Parser t s (g Identity)
+   Delay :: Parser t s r -> (s -> Parser t s r) -> Parser t s r
+   Choice :: Parser t s r -> Parser t s r -> Parser t s r
 
 -- | Feeds a chunk of the input to the parser.
 feed :: Monoid s => s -> Parser t s r -> Parser t s r
@@ -81,6 +86,14 @@ feed s (Result s' r) = Result (mappend s' s) r
 feed s (ResultPart r _ f) = resultPart r (f s)
 feed s (Choice p1 p2) = feed s p1 <||> feed s p2
 feed s (Delay _ f) = f s
+feed s (ResultStructure r) = case runState (Rank2.traverse feedMaybe r) s
+                             of (r', s') -> ResultStructure r'
+   where feedMaybe :: Monoid s => Parser t s r -> State s (Parser t s r)
+         feedMaybe p = state (\s-> let (p', s') = case feed s p
+                                                  of Result s' a -> (Result mempty a, s')
+                                                     Failure msg -> (Failure msg, mempty)
+                                                     p' -> (p', mempty)
+                                   in (p', s'))
 
 -- | Signals the end of the input.
 feedEof :: Monoid s => Parser t s r -> Parser t s r
@@ -89,6 +102,14 @@ feedEof p@Result{} = p
 feedEof (ResultPart r e _) = prepend r (feedEof e)
 feedEof (Choice p1 p2) = feedEof p1 <||> feedEof p2
 feedEof (Delay e _) = feedEof e
+feedEof (ResultStructure r) = case runStateT (Rank2.traverse feedEofMaybe r) mempty
+                              of Left (Just msg) -> Failure msg
+                                 Right (r', s') -> Result s' r'
+   where feedEofMaybe :: Monoid s => Parser t s r -> StateT s (Either (Maybe String)) (Identity r)
+         feedEofMaybe p = StateT (\s-> case feedEof (feed s p)
+                                       of Result s' a -> Right (Identity a, s')
+                                          Failure msg -> Left (Just msg)
+                                          p' -> Left Nothing)
 
 -- | Extracts all available parsing results from a 'Parser'. The first component of the result pair is a list of
 -- complete results together with the unconsumed remainder of the input. If the parsing can continue further, the second
@@ -171,8 +192,10 @@ instance Monoid s => MonadFix (Parser t s) where
    mfix f = Delay fixEof fixInput
       where fixEof = let r = f (atEof r) in r
             fixInput s = mfix (feed s . f)
+            atEof :: Parser t s r -> r
             atEof (Result _ r) = r
             atEof (ResultPart r e f) = r (atEof e)
+            atEof (ResultStructure r) = (Identity . atEof) Rank2.<$> r
             atEof (Delay e f) = atEof e
             atEof Failure{} = error "mfix on Failure"
             atEof Choice{} = error "mfix on Choice"
@@ -308,6 +331,10 @@ resultPart _ Failure{} = error "Internal contradiction"
 resultPart f (Result s r) = Result s (f r)
 resultPart r1 (ResultPart r2 e f) = ResultPart (r1 . r2) e f
 resultPart r p = ResultPart r (feedEof p) (flip feed p)
+
+-- | Combine a record of parsers into a record parser.
+record :: Rank2.Traversable g => g (Parser t s) -> Parser t s (g Identity)
+record = ResultStructure
 
 isInfallible :: Parser t s r -> Bool
 isInfallible Result{} = True
