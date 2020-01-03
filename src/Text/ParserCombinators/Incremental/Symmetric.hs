@@ -40,7 +40,7 @@ import qualified Text.ParserCombinators.Incremental as Incremental (Parser)
 -- | An empty type to specialize 'Parser' for the symmetric 'Alternative' instance.
 data Symmetric
 
-type Parser s r = Incremental.Parser Symmetric s r
+type Parser = Incremental.Parser Symmetric
 
 -- | The symmetric version of the '<|>' choice combinator.
 instance Monoid s => Alternative (Incremental.Parser Symmetric s) where

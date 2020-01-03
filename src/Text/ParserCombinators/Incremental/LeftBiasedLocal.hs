@@ -40,7 +40,7 @@ import qualified Text.ParserCombinators.Incremental as Incremental (Parser)
 -- | An empty type to specialize 'Parser' for the left-biased 'Alternative' instance.
 data LeftBiasedLocal
 
-type Parser s r = Incremental.Parser LeftBiasedLocal s r
+type Parser = Incremental.Parser LeftBiasedLocal
 
 -- | Left-biased choice. The right parser is used only if the left one utterly fails.
 instance Monoid s => Alternative (Incremental.Parser LeftBiasedLocal s) where
