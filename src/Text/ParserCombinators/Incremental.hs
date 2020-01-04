@@ -75,7 +75,7 @@ data Parser t s r where
    Failure :: String -> Parser t s r
    Result :: s -> r -> Parser t s r
    ResultPart :: (r -> r) -> Parser t s r -> (s -> Parser t s r) -> Parser t s r
-   ResultStructure :: Rank2.Traversable g => g (Parser t s) -> Parser t s (g Identity)
+   ResultStructure :: (Rank2.Traversable g, Applicative m) => g (Parser t s) -> Parser t s (g m)
    Delay :: Parser t s r -> (s -> Parser t s r) -> Parser t s r
    Choice :: Parser t s r -> Parser t s r -> Parser t s r
 
@@ -105,9 +105,9 @@ feedEof (Delay e _) = feedEof e
 feedEof (ResultStructure r) = case runStateT (Rank2.traverse feedEofMaybe r) mempty
                               of Left (Just msg) -> Failure msg
                                  Right (r', s') -> Result s' r'
-   where feedEofMaybe :: Monoid s => Parser t s r -> StateT s (Either (Maybe String)) (Identity r)
+   where feedEofMaybe :: (Applicative m, Monoid s) => Parser t s r -> StateT s (Either (Maybe String)) (m r)
          feedEofMaybe p = StateT (\s-> case feedEof (feed s p)
-                                       of Result s' a -> Right (Identity a, s')
+                                       of Result s' a -> Right (pure a, s')
                                           Failure msg -> Left (Just msg)
                                           p' -> Left Nothing)
 
@@ -195,7 +195,7 @@ instance Monoid s => MonadFix (Parser t s) where
             atEof :: Parser t s r -> r
             atEof (Result _ r) = r
             atEof (ResultPart r e f) = r (atEof e)
-            atEof (ResultStructure r) = (Identity . atEof) Rank2.<$> r
+            atEof (ResultStructure r) = (pure . atEof) Rank2.<$> r
             atEof (Delay e f) = atEof e
             atEof Failure{} = error "mfix on Failure"
             atEof Choice{} = error "mfix on Choice"
@@ -333,7 +333,7 @@ resultPart r1 (ResultPart r2 e f) = ResultPart (r1 . r2) e f
 resultPart r p = ResultPart r (feedEof p) (flip feed p)
 
 -- | Combine a record of parsers into a record parser.
-record :: Rank2.Traversable g => g (Parser t s) -> Parser t s (g Identity)
+record :: (Rank2.Traversable g, Applicative m) => g (Parser t s) -> Parser t s (g m)
 record = ResultStructure
 
 isInfallible :: Parser t s r -> Bool
