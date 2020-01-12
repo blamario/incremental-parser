@@ -59,6 +59,7 @@ import Data.Foldable (fold)
 import Data.Functor.Identity (Identity(Identity))
 import Data.Maybe (fromMaybe)
 import Data.Semigroup (Semigroup(..))
+import Data.String (fromString)
 import Data.Monoid (Monoid, mempty, mappend)
 import Data.Monoid.Cancellative (LeftReductiveMonoid, stripPrefix)
 import Data.Monoid.Factorial (FactorialMonoid, splitPrimePrefix, span)
@@ -227,9 +228,10 @@ instance (Alternative (Parser t s), MonoidNull s) => Parsing (Parser t s) where
 instance (Alternative (Parser t s), MonoidNull s) => LookAheadParsing (Parser t s) where
    lookAhead = lookAhead
 
-instance (Alternative (Parser t String)) => CharParsing (Parser t String) where
-   satisfy = fmap head . satisfyChar
-   string = string
+instance (Alternative (Parser t s), TextualMonoid s) => CharParsing (Parser t s) where
+   satisfy = fmap (fromMaybe (error "isNothing . characterPrefix") . Textual.characterPrefix) . satisfyChar
+   string s = string (fromString s) *> pure s
+   text t = string (Textual.fromText t) *> pure t
 
 appendIncremental :: (Monoid s, Semigroup r) => Parser t s r -> Parser t s r -> Parser t s r
 appendIncremental (Result s r) p = resultPart (r <>) (feed s p)
