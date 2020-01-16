@@ -26,7 +26,7 @@
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, GADTs, UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, GADTs, RankNTypes, UndecidableInstances #-}
 
 module Text.ParserCombinators.Incremental (
    -- * The Parser type
@@ -47,16 +47,14 @@ module Text.ParserCombinators.Incremental (
    )
 where
 
-import Prelude hiding (and, null, span, takeWhile)
+import Prelude hiding (and, null, pred, span, takeWhile)
 import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative ((<|>)), (<$>))
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
-import Control.Arrow (first)
-import Control.Monad (ap)
 import Control.Monad.Fail (MonadFail(fail))
 import Control.Monad.Fix (MonadFix(mfix))
+import Control.Monad.Trans.List (ListT(ListT), runListT)
 import Control.Monad.Trans.State.Strict (State, runState, state, StateT(StateT, runStateT))
 import Data.Foldable (fold)
-import Data.Functor.Identity (Identity(Identity))
 import Data.Maybe (fromMaybe)
 import Data.Semigroup (Semigroup(..))
 import Data.String (fromString)
@@ -80,7 +78,7 @@ data Parser t s r where
    Failure :: String -> Parser t s r
    Result :: s -> r -> Parser t s r
    ResultPart :: (r -> r) -> Parser t s r -> (s -> Parser t s r) -> Parser t s r
-   ResultStructure :: (Rank2.Traversable g, Applicative m) => Maybe s -> g (Parser t s) -> Parser t s (g m)
+   ResultStructure :: (Monoid s, Rank2.Traversable g, Applicative m) => Maybe s -> g (Parser t s) -> Parser t s (g m)
    Delay :: Parser t s r -> (s -> Parser t s r) -> Parser t s r
    Choice :: Parser t s r -> Parser t s r -> Parser t s r
 
@@ -93,12 +91,13 @@ feed s (Choice p1 p2) = feed s p1 <||> feed s p2
 feed s (Delay _ f) = f s
 feed s (ResultStructure s' r) = ResultStructure (s'' <> s') r'
    where (r', s'') = runState (Rank2.traverse feedMaybe r) (Just s)
-         feedMaybe :: Monoid s => Parser t s r -> State (Maybe s) (Parser t s r)
-         feedMaybe p = state (\s-> let (p', s') = case maybe id feed s p
-                                                  of Result s' a -> (Result mempty a, Just s')
-                                                     Failure msg -> (Failure msg, Nothing)
-                                                     p' -> (p', Nothing)
-                                   in (p', s'))
+
+feedMaybe :: Monoid s => Parser t s r -> State (Maybe s) (Parser t s r)
+feedMaybe p = state (\s-> let (p', s') = case maybe id feed s p
+                                         of Result s'' a -> (Result mempty a, Just s'')
+                                            Failure msg -> (Failure msg, Nothing)
+                                            p'' -> (p'', Nothing)
+                          in (p', s'))
 
 -- | Signals the end of the input.
 feedEof :: Monoid s => Parser t s r -> Parser t s r
@@ -107,13 +106,16 @@ feedEof p@Result{} = p
 feedEof (ResultPart r e _) = prepend r (feedEof e)
 feedEof (Choice p1 p2) = feedEof p1 <||> feedEof p2
 feedEof (Delay e _) = feedEof e
-feedEof (ResultStructure s r) = case runStateT (Rank2.traverse feedEofMaybe r) Nothing
-                                of Left msg -> Failure msg
-                                   Right (r', s') -> Result (fold s' <> fold s) r'
-   where feedEofMaybe :: (Applicative m, Monoid s) => Parser t s r -> StateT (Maybe s) (Either String) (m r)
-         feedEofMaybe p = StateT (\s-> case feedEof (maybe id feed s p)
-                                       of Result s' a -> Right (pure a, Just s')
-                                          Failure msg -> Left msg)
+feedEof (ResultStructure s r) = either Failure collect (runListT $ runStateT (Rank2.traverse feedEofMaybe r) Nothing)
+   where collect = foldr1 Choice . map result
+         result (r', s') = Result (fold s' <> fold s) r'
+
+
+feedEofMaybe :: (Applicative m, Monoid s) => Parser t s r -> StateT (Maybe s) (ListT (Either String)) (m r)
+feedEofMaybe p = StateT (\s-> ListT $ case feedEof (maybe id feed s p)
+                                      of Failure msg -> Left msg
+                                         p' -> Right (map wrap $ completeResults p'))
+   where wrap (r, s) = (pure r, Just s)
 
 -- | Extracts all available parsing results from a 'Parser'. The first component of the result pair is a list of
 -- complete results together with the unconsumed remainder of the input. If the parsing can continue further, the second
@@ -138,10 +140,11 @@ inspect p = ([], Just (Nothing, p))
 -- | Like 'results', but returns only the complete results with the corresponding unconsumed inputs.
 completeResults :: Monoid s => Parser t s r -> [(r, s)]
 completeResults (Result s r) = [(r, s)]
-completeResults (ResultPart r e f) = map (\(r', t)-> (r r', t)) (completeResults e)
+completeResults (ResultPart r e _) = map (\(r', t)-> (r r', t)) (completeResults e)
 completeResults (ResultStructure s r) = ((<> fold s) <$>) <$> runStateT (Rank2.traverse complete r) mempty
    where complete :: (Applicative m, Monoid s) => Parser t s r -> StateT s [] (m r)
-         complete p = StateT (\s-> first pure <$> completeResults (feed s p))
+         complete p = StateT (\s'-> pureFst <$> completeResults (feed s' p))
+         pureFst (a, b) = (pure a, b)
 completeResults (Choice p1 p2) | isInfallible p1 = completeResults p1 ++ completeResults p2
 completeResults _ = []
 
@@ -201,9 +204,9 @@ instance Monoid s => MonadFix (Parser t s) where
             fixInput s = mfix (feed s . f)
             atEof :: Parser t s r -> r
             atEof (Result _ r) = r
-            atEof (ResultPart r e f) = r (atEof e)
+            atEof (ResultPart r e _) = r (atEof e)
             atEof (ResultStructure _ r) = (pure . atEof) Rank2.<$> r
-            atEof (Delay e f) = atEof e
+            atEof (Delay e _) = atEof e
             atEof (Failure msg) = error ("mfix on Failure " <> msg)
             atEof Choice{} = error "mfix on Choice"
 
@@ -303,6 +306,7 @@ showWith _ _ (Failure s) = "Failure " ++ show s
 showWith _ sr (Result s r) = "(Result " ++ shows s (" " ++ sr r ++ ")")
 showWith sm sr (ResultPart r e f) =
    "(ResultPart (mappend " ++ sr (r mempty) ++ ") " ++ showWith sm sr e ++ " " ++ sm f ++ ")"
+showWith _ _ (ResultStructure s _) = "(ResultStructure " ++ shows s ")"
 showWith sm sr (Choice p1 p2) = "(Choice " ++ showWith sm sr p1 ++ " " ++ showWith sm sr p2 ++ ")"
 showWith sm sr (Delay e f) = "(Delay " ++ showWith sm sr e ++ " " ++ sm f ++ ")"
 
@@ -316,12 +320,14 @@ mapIncremental f p = apply (mapIncremental f) p
 -- | Behaves like the argument parser, but without consuming any input.
 lookAhead :: Monoid s => Parser t s r -> Parser t s r
 lookAhead p = lookAheadInto mempty p
-   where lookAheadInto :: Monoid s => s -> Parser t s r -> Parser t s r
-         lookAheadInto _ p@Failure{}        = p
-         lookAheadInto t (Result _ r)       = Result t r
-         lookAheadInto t (ResultPart r e f) = ResultPart r (lookAheadInto t e) (\s-> lookAheadInto (mappend t s) (f s))
-         lookAheadInto t (Choice p1 p2)     = lookAheadInto t p1 <||> lookAheadInto t p2
-         lookAheadInto t (Delay e f)        = Delay (lookAheadInto t e) (\s-> lookAheadInto (mappend t s) (f s))
+
+lookAheadInto :: Monoid s => s -> Parser t s r -> Parser t s r
+lookAheadInto _ p@Failure{}        = p
+lookAheadInto t (Result _ r)       = Result t r
+lookAheadInto t (ResultPart r e f) = ResultPart r (lookAheadInto t e) (\s-> lookAheadInto (mappend t s) (f s))
+lookAheadInto t (ResultStructure _ r) = ResultStructure (Just t) r
+lookAheadInto t (Choice p1 p2)     = lookAheadInto t p1 <||> lookAheadInto t p2
+lookAheadInto t (Delay e f)        = Delay (lookAheadInto t e) (\s-> lookAheadInto (mappend t s) (f s))
 
 -- | Does not consume any input; succeeds (with 'mempty' result) iff the argument parser fails.
 notFollowedBy :: (Monoid s, Monoid r) => Parser t s r' -> Parser t s r
@@ -354,6 +360,7 @@ prepend :: (r -> r) -> Parser t s r -> Parser t s r
 prepend _ p@Failure{} = p
 prepend r1 (Result s r2) = Result s (r1 r2)
 prepend r1 (ResultPart r2 e f) = ResultPart (r1 . r2) e f
+prepend r p@ResultStructure{} = Delay (prepend r $ feedEof p) (\s-> prepend r $ feed s p)
 prepend r (Choice p1 p2) = Choice (prepend r p1) (prepend r p2)
 prepend r (Delay e f) = Delay (prepend r e) (prepend r . f)
 
@@ -365,10 +372,11 @@ apply g (ResultPart r e f) = Delay (g $ prepend r e) (g . prepend r . f)
 apply f p = Delay (f $ feedEof p) (\s-> f $ feed s p)
 
 -- | Modifies the parser type
-mapType :: (Parser t s r -> Parser b s r) -> Parser t s r -> Parser b s r
+mapType :: (forall a. Parser t s a -> Parser b s a) -> Parser t s r -> Parser b s r
 mapType _ (Failure s) = Failure s
 mapType _ (Result s r) = Result s r
 mapType g (ResultPart r e f) = ResultPart r (g e) (g . f)
+mapType f (ResultStructure s r) = ResultStructure s (mapType f Rank2.<$> r)
 mapType f (Choice p1 p2) = Choice (f p1) (f p2)
 mapType g (Delay e f) = Delay (g e) (g . f)
 
@@ -377,8 +385,8 @@ mapType g (Delay e f) = Delay (g e) (g . f)
 --
 -- > f (s1 <> s2) == f s1 <> f s2
 mapInput :: (Monoid s, Monoid s') => (s -> s') -> (s' -> s) -> Parser t s r -> Parser t s' r
-mapInput forth back (Failure msg) = Failure msg
-mapInput forth back (Result s r) = Result (forth s) r
+mapInput _ _        (Failure msg) = Failure msg
+mapInput forth _    (Result s r) = Result (forth s) r
 mapInput forth back (ResultPart r e f) = ResultPart r (mapInput forth back e) (mapInput forth back . f . back)
 mapInput forth back (Delay e f) = Delay (mapInput forth back e) (mapInput forth back . f . back)
 mapInput forth back (Choice p1 p2) = Choice (mapInput forth back p1) (mapInput forth back p2)
@@ -398,7 +406,7 @@ mapMaybeInput forth back (Delay e f) =
 mapMaybeInput forth back (Choice p1 p2) = Choice (mapMaybeInput forth back p1) (mapMaybeInput forth back p2)
 mapMaybeInput forth back (ResultStructure (Just s) r) =
    delayIncompletePositive forth back (\s'-> ResultStructure (Just s') (mapMaybeInput forth back Rank2.<$> r)) s
-mapMaybeInput forth back p@(ResultStructure Nothing r) =
+mapMaybeInput forth back p@(ResultStructure Nothing _) =
    Delay (mapMaybeInput forth back $ feedEof p) (delayIncompleteNegative back $ mapMaybeInput forth back . (`feed` p))
 
 delayIncompletePositive :: (Monoid s, Monoid s') =>
@@ -502,7 +510,7 @@ takeCharsWhile1 pred = more f
 
 -- | Accepts the given number of occurrences of the argument parser.
 count :: (Monoid s, Monoid r, Semigroup r) => Int -> Parser t s r -> Parser t s r
-count n p | n > 0 = p >< count (pred n) p
+count n p | n > 0 = p >< count (n - 1) p
           | otherwise = mempty
 
 -- | Discards the results of the argument parser.
