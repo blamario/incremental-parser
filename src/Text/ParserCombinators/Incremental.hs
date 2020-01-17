@@ -121,21 +121,21 @@ feedEofMaybe p = StateT (\s-> ListT $ case feedEof (maybe id feed s p)
 -- complete results together with the unconsumed remainder of the input. If the parsing can continue further, the second
 -- component of the pair provides the partial result prefix together with the parser for the rest of the input.
 results :: Monoid r => Parser t s r -> ([(r, s)], Maybe (r, Parser t s r))
-results = fmap (fmap (\(mf, p)-> (fromMaybe id mf mempty, p))) . inspect
+results = either (const ([], Nothing)) (((\(mf, p)-> (fromMaybe id mf mempty, p)) <$>) <$>) . inspect
 
 -- | Like 'results', but more general: doesn't assume that the result type is a 'Monoid'.
-inspect :: Parser t s r -> ([(r, s)], Maybe (Maybe (r -> r), Parser t s r))
-inspect Failure{} = ([], Nothing)
-inspect (Result s r) = ([(r, s)], Nothing)
-inspect (ResultPart r e f) = ([], Just (Just r, ResultPart id e f))
-inspect (Choice p1 p2) | isInfallible p1 = (results1 ++ results2, combine rest1 rest2)
-   where (results1, rest1) = inspect p1
-         (results2, rest2) = inspect p2
+inspect :: Parser t s r -> Either String ([(r, s)], Maybe (Maybe (r -> r), Parser t s r))
+inspect (Failure msg) = Left msg
+inspect (Result s r) = Right ([(r, s)], Nothing)
+inspect (ResultPart r e f) = Right ([], Just (Just r, ResultPart id e f))
+inspect (Choice p1 p2) | isInfallible p1 = Right (results1 ++ results2, combine rest1 rest2)
+   where (results1, rest1) = either (const ([], Nothing)) id (inspect p1)
+         (results2, rest2) = either (const ([], Nothing)) id (inspect p2)
          combine Nothing rest = rest
          combine rest Nothing = rest
          combine (Just (r1, p1')) (Just (r2, p2')) = 
             Just (Just id, Choice (prepend (fromMaybe id r1) p1') (prepend (fromMaybe id r2) p2'))
-inspect p = ([], Just (Nothing, p))
+inspect p = Right ([], Just (Nothing, p))
 
 -- | Like 'results', but returns only the complete results with the corresponding unconsumed inputs.
 completeResults :: Monoid s => Parser t s r -> [(r, s)]

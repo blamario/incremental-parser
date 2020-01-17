@@ -24,7 +24,7 @@ module Control.Applicative.Monoid (
 where
 
 import Control.Applicative (Applicative (pure, (<*>)), Alternative ((<|>), some, many), (<$>))
-import Data.Monoid (Monoid, mempty, mappend, mconcat)
+import Data.Monoid (Monoid, mempty, mappend)
 import Data.Semigroup (Semigroup, (<>))
 
 
