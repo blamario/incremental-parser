@@ -59,8 +59,8 @@ import Data.Maybe (fromMaybe)
 import Data.Semigroup (Semigroup(..))
 import Data.String (fromString)
 import Data.Monoid (Monoid, mempty, mappend)
-import Data.Monoid.Cancellative (LeftReductiveMonoid, stripPrefix)
-import Data.Monoid.Factorial (FactorialMonoid, splitPrimePrefix, span)
+import Data.Monoid.Cancellative (LeftReductiveMonoid, isPrefixOf, stripPrefix)
+import Data.Monoid.Factorial (FactorialMonoid, splitPrimePrefix, span, tails)
 import Data.Monoid.Null (MonoidNull(null))
 import Data.Monoid.Textual (TextualMonoid)
 import qualified Data.Monoid.Textual as Textual
@@ -161,7 +161,10 @@ infix  0 <?>
 
 -- | Name a parser for error reporting in case it fails.
 (<?>) :: Monoid s => Parser t s r -> String -> Parser t s r
-Failure{} <?> msg = Failure msg
+Failure old <?> msg
+   | [encountered] <- filter ("encountered " `isPrefixOf`) (tails old) =
+        Failure ("expected " <> msg <> ", " <> encountered)
+   | otherwise = Failure ("expected " <> msg)
 p@Result{} <?> _ = p
 p@ResultPart{} <?> _ = p
 p <?> msg = apply (<?> msg) p
@@ -221,12 +224,12 @@ instance Monoid s => MonoidApplicative (Parser t s) where
 
 instance (Alternative (Parser t s), MonoidNull s) => Parsing (Parser t s) where
    try = id
-   (<?>) = const
+   (<?>) = (<?>)
    notFollowedBy = notFollowedBy
    skipMany = concatMany . skip
    skipSome = concatSome . skip
    eof = eof
-   unexpected = Failure
+   unexpected = Failure . ("encountered " <>)
 
 instance (Alternative (Parser t s), MonoidNull s) => LookAheadParsing (Parser t s) where
    lookAhead = lookAhead
@@ -419,11 +422,11 @@ delayIncompleteNegative back f t =
    maybe (Delay (error "incomplete new input") (delayIncompleteNegative back f . (t <>))) f (back t)
 
 more :: (s -> Parser t s r) -> Parser t s r
-more = Delay (Failure "more")
+more = Delay (Failure "expected more input, encountered end of input")
 
 -- | A parser that fails on any non-empty input and succeeds at its end.
 eof :: (MonoidNull s, Monoid r, Semigroup r) => Parser t s r
-eof = Delay mempty (\s-> if null s then eof else Failure "eof")
+eof = Delay mempty (\s-> if null s then eof else Failure "expected end of input")
 
 -- | A parser that accepts any single input atom.
 anyToken :: FactorialMonoid s => Parser t s s
@@ -451,7 +454,8 @@ satisfyChar predicate = p
    where p = more f
          f s = case splitPrimePrefix s
                of Just (first, rest) -> case Textual.characterPrefix first
-                                        of Just c -> if predicate c then Result rest first else Failure "satisfyChar"
+                                        of Just c -> if predicate c then Result rest first
+                                                     else Failure ("expected satisfyChar, encountered " ++ show c)
                                            Nothing -> if null rest then p else Failure "satisfyChar"
                   Nothing -> p
 
@@ -501,7 +505,9 @@ takeCharsWhile1 pred = more f
              | otherwise = let (prefix, suffix) = Textual.span (const False) pred s
                                (prefix', suffix') = Textual.span (const True) (const False) suffix
                            in if null prefix
-                              then if null prefix' then Failure "takeCharsWhile1"
+                              then if null prefix'
+                                   then Failure ("takeCharsWhile1 encountered "
+                                                  <> maybe "a non-character" show (Textual.characterPrefix s))
                                    else prepend (mappend prefix') (f suffix')
                               else if null suffix then resultPart (mappend prefix) (takeCharsWhile pred)
                                    else if null prefix' then Result suffix prefix
