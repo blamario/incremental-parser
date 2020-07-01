@@ -241,7 +241,7 @@ instance (Alternative (Parser t s), FactorialMonoid s, LeftReductive s) => Input
    anyToken = anyToken
    take n = more (f . splitAt n)
      where f (prefix, suffix)
-             | not (null suffix) || n' == 0 = Result suffix prefix
+             | n' == 0 = Result suffix prefix
              | otherwise = resultPart (prefix <>) (take n')
              where n' = n - length prefix
    satisfy predicate = p
