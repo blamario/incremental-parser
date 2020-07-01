@@ -66,7 +66,7 @@ import Data.Semigroup.Cancellative (LeftReductive, isPrefixOf, stripPrefix)
 import Text.Parser.Combinators (Parsing)
 import Text.Parser.Char (CharParsing)
 import Text.Parser.LookAhead (LookAheadParsing)
-import Text.Parser.Input (InputParsing(take))
+import Text.Parser.Input (InputParsing(take), InputCharParsing)
 import qualified Text.Parser.Input
 import qualified Text.Parser.Combinators
 import qualified Text.Parser.Char
@@ -262,6 +262,11 @@ instance (Alternative (Parser t s), FactorialMonoid s, LeftReductive s) => Input
    string = string
    takeWhile = takeWhile
    takeWhile1 = takeWhile1
+
+instance (TextualMonoid s, LeftReductive s, LookAheadParsing (Parser t s)) => InputCharParsing (Parser t s) where
+   satisfyCharInput = satisfyChar
+   takeCharsWhile = takeCharsWhile
+   takeCharsWhile1 = takeCharsWhile1
 
 appendIncremental :: (Monoid s, Semigroup r) => Parser t s r -> Parser t s r -> Parser t s r
 appendIncremental (Result s r) p = resultPart (r <>) (feed s p)
