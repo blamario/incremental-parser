@@ -54,7 +54,9 @@ import Data.Semigroup.Cancellative (LeftReductive, isPrefixOf, stripPrefix)
 import Text.Parser.Combinators (Parsing)
 import Text.Parser.Char (CharParsing)
 import Text.Parser.LookAhead (LookAheadParsing)
+import Text.Parser.Deterministic (DeterministicParsing)
 import Text.Parser.Input (InputParsing(take), InputCharParsing)
+import qualified Text.Parser.Deterministic
 import qualified Text.Parser.Input
 import qualified Text.Parser.Combinators
 import qualified Text.Parser.Char
@@ -224,6 +226,9 @@ instance (Alternative (Parser t s), MonoidNull s) => Parsing (Parser t s) where
 
 instance (Alternative (Parser t s), MonoidNull s) => LookAheadParsing (Parser t s) where
    lookAhead = lookAhead
+
+instance (Alternative (Parser t s), MonoidNull s) => DeterministicParsing (Parser t s) where
+   (<<|>) = (<<|>)
 
 instance (Alternative (Parser t s), TextualMonoid s) => CharParsing (Parser t s) where
    satisfy = fmap (fromMaybe (error "isNothing . characterPrefix") . Textual.characterPrefix) . satisfyChar
