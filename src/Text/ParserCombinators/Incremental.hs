@@ -26,7 +26,7 @@
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, GADTs, RankNTypes, UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, GADTs, RankNTypes, TypeFamilies, UndecidableInstances #-}
 
 module Text.ParserCombinators.Incremental (
    -- * The Parser type
@@ -47,7 +47,6 @@ module Text.ParserCombinators.Incremental (
    )
 where
 
-import Prelude hiding (and, null, pred, span, takeWhile)
 import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative ((<|>)), (<$>))
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad.Fail (MonadFail(fail))
@@ -59,18 +58,22 @@ import Data.Maybe (fromMaybe)
 import Data.Semigroup (Semigroup(..))
 import Data.String (fromString)
 import Data.Monoid (Monoid, mempty, mappend)
-import Data.Monoid.Cancellative (LeftReductiveMonoid, isPrefixOf, stripPrefix)
-import Data.Monoid.Factorial (FactorialMonoid, splitPrimePrefix, span, tails)
+import Data.Monoid.Factorial (FactorialMonoid, length, span, splitAt, splitPrimePrefix, tails)
 import Data.Monoid.Null (MonoidNull(null))
 import Data.Monoid.Textual (TextualMonoid)
 import qualified Data.Monoid.Textual as Textual
+import Data.Semigroup.Cancellative (LeftReductive, isPrefixOf, stripPrefix)
 import Text.Parser.Combinators (Parsing)
 import Text.Parser.Char (CharParsing)
 import Text.Parser.LookAhead (LookAheadParsing)
+import Text.Parser.Input (InputParsing(take))
+import qualified Text.Parser.Input
 import qualified Text.Parser.Combinators
 import qualified Text.Parser.Char
 import qualified Text.Parser.LookAhead
 import qualified Rank2
+
+import Prelude hiding (and, length, null, pred, span, splitAt, take, takeWhile)
 
 -- | The central parser type. Its first parameter is the subtype of the parser, the second is the input monoid type, the
 -- third the output type.
@@ -238,6 +241,27 @@ instance (Alternative (Parser t s), TextualMonoid s) => CharParsing (Parser t s)
    satisfy = fmap (fromMaybe (error "isNothing . characterPrefix") . Textual.characterPrefix) . satisfyChar
    string s = string (fromString s) *> pure s
    text t = string (Textual.fromText t) *> pure t
+
+instance (Alternative (Parser t s), FactorialMonoid s, LeftReductive s) => InputParsing (Parser t s) where
+   type ParserInput (Parser t s) = s
+   getInput = lookAhead acceptAll
+   anyToken = anyToken
+   take n = more (f . splitAt n)
+     where f (prefix, suffix)
+             | not (null suffix) || n' == 0 = Result suffix prefix
+             | otherwise = resultPart (prefix <>) (take n')
+             where n' = n - length prefix
+   satisfy predicate = p
+     where p = more (f . splitPrimePrefix)
+           f (Just (first, rest)) = if predicate first then Result rest first else Failure "satisfy"
+           f Nothing = p
+   notSatisfy predicate = p
+     where p = Delay mempty (f . splitPrimePrefix)
+           f (Just (first, rest)) = if predicate first then Failure "satisfy" else Result rest ()
+           f Nothing = p
+   string = string
+   takeWhile = takeWhile
+   takeWhile1 = takeWhile1
 
 appendIncremental :: (Monoid s, Semigroup r) => Parser t s r -> Parser t s r -> Parser t s r
 appendIncremental (Result s r) p = resultPart (r <>) (feed s p)
@@ -460,7 +484,7 @@ satisfyChar predicate = p
                   Nothing -> p
 
 -- | A parser that consumes and returns the given prefix of the input.
-string :: (LeftReductiveMonoid s, MonoidNull s, Semigroup s) => s -> Parser t s s
+string :: (LeftReductive s, MonoidNull s, Semigroup s) => s -> Parser t s s
 string x | null x = mempty
 string x = more (\y-> case (stripPrefix x y, stripPrefix y x)
                       of (Just y', _) -> Result y' x
