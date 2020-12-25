@@ -1,5 +1,5 @@
 Name:                incremental-parser
-Version:             0.5
+Version:             0.5.0.1
 Cabal-Version:       >= 1.10
 Build-Type:          Simple
 Synopsis:            Generic parser library capable of providing partial results from partial input.
@@ -41,7 +41,7 @@ test-suite Main
   Default-Language:  Haskell2010
   Build-Depends:     base < 5, incremental-parser, monoid-subclasses < 1.1,
                      QuickCheck >= 2 && < 3, checkers >= 0.3.2 && < 0.6,
-                     tasty >= 0.7 && < 1.4, tasty-quickcheck >= 0.7 && < 1.0
+                     tasty >= 0.7 && < 1.5, tasty-quickcheck >= 0.7 && < 1.0
   Main-is:           Test/TestIncrementalParser.hs
 
 benchmark CSV
@@ -50,5 +50,5 @@ benchmark CSV
   hs-source-dirs:    Benchmarks
   ghc-options:       -O2 -Wall -rtsopts
   main-is:           CSV.hs
-  Build-Depends:     base < 5, monoid-subclasses < 1.1, incremental-parser,
+  Build-Depends:     base < 5, incremental-parser, monoid-subclasses < 1.1,
                      bytestring >= 0.10.4.0, criterion >= 1.0, deepseq >= 1.1, text >= 1.1.1.0
