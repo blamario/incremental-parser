@@ -27,7 +27,7 @@ import Data.Monoid (Monoid, (<>), mappend, mempty)
 import Data.Monoid.Textual (TextualMonoid)
 import Data.Monoid.Factorial (FactorialMonoid (splitAt))
 import Data.Monoid.Null (MonoidNull (null))
-import Text.ParserCombinators.Incremental.LeftBiasedLocal
+import Text.ParserCombinators.Incremental.LeftBiasedLocal hiding (record)
 
 import Control.DeepSeq (NFData(..))
 import Criterion.Main (bench, bgroup, defaultMain, nf)

@@ -50,5 +50,5 @@ benchmark CSV
   hs-source-dirs:    Benchmarks
   ghc-options:       -O2 -Wall -rtsopts
   main-is:           CSV.hs
-  Build-Depends:     base < 5, incremental-parser, monoid-subclasses < 1.2,
+  Build-Depends:     base < 5, incremental-parser, monoid-subclasses < 1.3,
                      bytestring >= 0.10.4.0, criterion >= 1.0, deepseq >= 1.1, text >= 1.1.1.0
