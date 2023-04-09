@@ -1,5 +1,5 @@
 Name:                incremental-parser
-Version:             0.5.0.4
+Version:             0.5.0.5
 Cabal-Version:       >= 1.10
 Build-Type:          Simple
 Synopsis:            Generic parser library capable of providing partial results from partial input.
@@ -14,7 +14,7 @@ Description:
   
 License:             GPL-3
 License-file:        LICENSE.txt
-Copyright:           (c) 2011-2022 Mario Blazevic
+Copyright:           (c) 2011-2023 Mario Blazevic
 Author:              Mario Blazevic
 Maintainer:          blamario@yahoo.com
 Homepage:            https://github.com/blamario/incremental-parser
