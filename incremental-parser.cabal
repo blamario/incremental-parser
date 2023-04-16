@@ -18,7 +18,7 @@ Copyright:           (c) 2011-2023 Mario Blazevic
 Author:              Mario Blazevic
 Maintainer:          blamario@yahoo.com
 Homepage:            https://github.com/blamario/incremental-parser
-Extra-Source-Files:  Benchmarks/airports.dat, README.md
+Extra-Source-Files:  Benchmarks/airports.dat, README.md, CHANGELOG.md
 
 Source-repository head
   type:              git
