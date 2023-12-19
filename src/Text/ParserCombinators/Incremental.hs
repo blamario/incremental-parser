@@ -281,7 +281,7 @@ instance (Monoid s, Semigroup r) => Semigroup (Parser t s r) where
 
 instance (Monoid s, Monoid r, Semigroup r) => Monoid (Parser t s r) where
    mempty = return mempty
-   mappend = (><)
+   mappend = (<>)
 
 instance (Alternative (Parser t s), Monoid s) => MonoidAlternative (Parser t s) where
    moptional p = p <|> mempty

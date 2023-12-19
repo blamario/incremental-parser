@@ -85,13 +85,14 @@ instance Applicative (TestParser a) where
    pure x = TestParser (Described "pure ?" (pure x))
    TestParser (Described d1 p1) <*> TestParser (Described d2 p2) =
       TestParser (Described (d1 ++ " <*> " ++ d2) (p1 <*> p2))
+   TestParser (Described d1 p1) *> TestParser (Described d2 p2) =
+      TestParser (Described (d1 ++ " *> " ++ d2) (p1 >> p2))
 
 instance Monad (TestParser a) where
-   return x = TestParser (Described "return ?" (return x))
+   return = pure
    TestParser (Described d1 p1) >>= f =
       TestParser (Described (d1 ++ " >>= ?") (p1 >>= describedParser . f))
-   TestParser (Described d1 p1) >> TestParser (Described d2 p2) =
-      TestParser (Described (d1 ++ " >> " ++ d2) (p1 >> p2))
+   (>>) = (*>)
 
 instance Alternative (Parser a [Bool]) => Alternative (TestParser a) where
    empty = TestParser (Described "failure" empty)
@@ -284,7 +285,7 @@ instance Semigroup Bool where
 
 instance Monoid Bool where
    mempty = False
-   mappend = (||)
+   mappend = (<>)
 
 showBoolFun :: (r -> String) -> ([Bool] -> r) -> String
 showBoolFun show f = "\\[b]-> if b then " ++ show (f [True]) ++ " else " ++ show (f [False])
