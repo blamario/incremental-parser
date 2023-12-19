@@ -14,7 +14,7 @@
 -- 
 -- Implementation is based on Brzozowski derivatives.
 
-{-# LANGUAGE FlexibleContexts, FlexibleInstances, GADTs, RankNTypes, TypeFamilies, UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts, FlexibleInstances, GADTs, RankNTypes, ScopedTypeVariables, TypeFamilies, UndecidableInstances #-}
 
 module Text.ParserCombinators.Incremental (
    -- * The Parser type
@@ -39,7 +39,7 @@ import Control.Applicative (Applicative (pure, (<*>), (*>), (<*)), Alternative (
 import Control.Applicative.Monoid(MonoidApplicative(..), MonoidAlternative(..))
 import Control.Monad.Fail (MonadFail(fail))
 import Control.Monad.Fix (MonadFix(mfix))
-import Control.Monad.Trans.List (ListT(ListT), runListT)
+import Control.Monad.Logic (LogicT(LogicT), observeAllT)
 import Control.Monad.Trans.State.Strict (State, runState, state, StateT(StateT, runStateT))
 import Data.Foldable (fold)
 import Data.Maybe (fromMaybe)
@@ -99,16 +99,21 @@ feedEof p@Result{} = p
 feedEof (ResultPart r e _) = prepend r (feedEof e)
 feedEof (Choice p1 p2) = feedEof p1 <||> feedEof p2
 feedEof (Delay e _) = feedEof e
-feedEof (ResultStructure s r) = either Failure collect (runListT $ runStateT (Rank2.traverse feedEofMaybe r) Nothing)
+feedEof (ResultStructure s r) = either Failure collect (observeAllT $ runStateT (Rank2.traverse feedEofMaybe r) Nothing)
    where collect = foldr1 Choice . map result
          result (r', s') = Result (fold s' <> fold s) r'
 
 
-feedEofMaybe :: (Applicative m, Monoid s) => Parser t s r -> StateT (Maybe s) (ListT (Either String)) (m r)
-feedEofMaybe p = StateT (\s-> ListT $ case feedEof (maybe id feed s p)
-                                      of Failure msg -> Left msg
-                                         p' -> Right (map wrap $ completeResults p'))
-   where wrap (r, s) = (pure r, Just s)
+feedEofMaybe :: forall m t s r. (Applicative m, Monoid s) => Parser t s r -> StateT (Maybe s) (LogicT (Either String)) (m r)
+feedEofMaybe p = StateT logic
+   where logic :: Maybe s -> LogicT (Either String) (m r, Maybe s)
+         f :: Maybe s -> forall a. ((m r, Maybe s) -> Either String a -> Either String a) -> Either String a -> Either String a
+         wrap :: (r, s) -> (m r, Maybe s)
+         logic s = LogicT (f s)
+         f s cons nil = case feedEof (maybe id feed s p)
+                        of Failure msg -> Left msg
+                           p' -> foldr cons nil (wrap <$> completeResults p')
+         wrap (r, s) = (pure r, Just s)
 
 -- | Extracts all available parsing results from a 'Parser'. The first component of the result pair is a list of
 -- complete results together with the unconsumed remainder of the input. If the parsing can continue further, the second
