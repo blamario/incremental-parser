@@ -1,5 +1,11 @@
 # Revision history for incremental-parser
 
+## 0.5.1 -- 2023-12-19
+
+* Replaced the ListT transformer with LogicT
+* Bumped dependency bounds
+* Fixed some compiler warnings
+
 ## 0.5.0.5 -- 2023-04-09
 
 * Allow `monoid-subclasses-1.2` and `rank2classes-1.5`, thanks to felixonmars
