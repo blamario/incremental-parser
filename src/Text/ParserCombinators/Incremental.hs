@@ -29,7 +29,7 @@ module Text.ParserCombinators.Incremental (
    count, skip, moptional, concatMany, concatSome, manyTill,
    (+<*>), (<||>), (<<|>), (><), lookAhead, notFollowedBy, and, andThen, record,
    -- * Parser mapping
-   mapType, mapIncremental, mapInput, mapMaybeInput,
+   mapType, mapIncremental, mapInput, mapMaybeInput, mapMaybeInputPrefix,
    -- * Utilities
    isInfallible, showWith, defaultMany, defaultSome
    )
@@ -422,8 +422,8 @@ mapInput forth back (Delay e f) = Delay (mapInput forth back e) (mapInput forth 
 mapInput forth back (Choice p1 p2) = Choice (mapInput forth back p1) (mapInput forth back p2)
 mapInput forth back (ResultStructure s r) = ResultStructure (forth <$> s) (mapInput forth back Rank2.<$> r)
 
--- | Converts a parser accepting one input type to another, just like 'mapMaybeInput except the two argument functions can
--- demand more input by returning @Nothing@. If 'mapMaybeInput is defined for the two input inputs, then
+-- | Converts a parser accepting one input type to another, just like 'mapInput' except the two argument functions
+-- can demand more input by returning @Nothing@. If 'mapMaybeInput' is defined for the two input types, then
 --
 -- > mapInput f g == mapMaybeInput (Just . f) (Just . g)
 mapMaybeInput :: (Monoid s, Monoid s') => (s -> Maybe s') -> (s' -> Maybe s) -> Parser t s r -> Parser t s' r
@@ -447,6 +447,37 @@ delayIncompletePositive forth back f s =
 delayIncompleteNegative :: (Monoid s, Monoid s') => (s' -> Maybe s) -> (s -> Parser t s' r) -> s' -> Parser t s' r
 delayIncompleteNegative back f t =
    maybe (Delay (error "incomplete new input") (delayIncompleteNegative back f . (t <>))) f (back t)
+
+-- | Converts a parser accepting one input type to another, just like 'mapMaybeInput' except the two argument
+-- functions are allowed to convert an arbitrary prefix of the input. If 'mapMaybeInput' is defined for the two input
+-- types, then
+--
+-- > mapMaybeInput f g == mapMaybeInputPrefix (fmap (, mempty) . f) (fmap (, mempty) . g)
+mapMaybeInputPrefix :: (MonoidNull s, Monoid s')
+                    => (s -> Maybe (s', s)) -> (s' -> Maybe (s, s')) -> Parser t s r -> Parser t s' r
+mapMaybeInputPrefix _ _ (Failure msg) = Failure msg
+mapMaybeInputPrefix forth back (Result s r) = Result (convertedForth forth s) r
+mapMaybeInputPrefix forth back (ResultPart r e f) =
+   ResultPart r (mapMaybeInputPrefix forth back e) (delayIncompleteNegativePrefix back $ mapMaybeInputPrefix forth back . f)
+mapMaybeInputPrefix forth back (Delay e f) =
+   Delay (mapMaybeInputPrefix forth back e) (delayIncompleteNegativePrefix back $ mapMaybeInputPrefix forth back . f)
+mapMaybeInputPrefix forth back (Choice p1 p2) =
+   Choice (mapMaybeInputPrefix forth back p1) (mapMaybeInputPrefix forth back p2)
+mapMaybeInputPrefix forth back (ResultStructure (Just s) r) =
+   ResultStructure (Just $ convertedForth forth s) (mapMaybeInputPrefix forth back Rank2.<$> r)
+mapMaybeInputPrefix forth back p@(ResultStructure Nothing _) =
+   Delay (mapMaybeInputPrefix forth back $ feedEof p)
+         (delayIncompleteNegativePrefix back $ mapMaybeInputPrefix forth back . (`feed` p))
+
+convertedForth :: (MonoidNull s, Semigroup s') => (s -> Maybe (s', s)) -> s -> s'
+convertedForth f s
+  | Just (prefix, suffix) <- f s = if null suffix then prefix else prefix <> convertedForth f suffix
+  | otherwise = error "incomplete old input"
+
+delayIncompleteNegativePrefix :: (Monoid s, Monoid s') => (s' -> Maybe (s, s')) -> (s -> Parser t s' r) -> s' -> Parser t s' r
+delayIncompleteNegativePrefix back f t
+   | Just (prefix, suffix) <- back t = feed suffix (f prefix)
+   | otherwise = Delay (error "incomplete new input") (delayIncompleteNegativePrefix back f . (t <>))
 
 more :: (s -> Parser t s r) -> Parser t s r
 more = Delay (Failure "expected more input, encountered end of input")
