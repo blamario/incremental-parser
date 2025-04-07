@@ -439,8 +439,8 @@ mapMaybeInput forth back (ResultStructure (Just s) r) =
 mapMaybeInput forth back p@(ResultStructure Nothing _) =
    Delay (mapMaybeInput forth back $ feedEof p) (delayIncompleteNegative back $ mapMaybeInput forth back . (`feed` p))
 
-delayIncompletePositive :: (Monoid s, Monoid s') =>
-                           (s -> Maybe s') -> (s' -> Maybe s) -> (s' -> Parser t s' r) -> s -> Parser t s' r
+delayIncompletePositive :: (Monoid s, Monoid s')
+                        => (s -> Maybe s') -> (s' -> Maybe s) -> (s' -> Parser t s' r) -> s -> Parser t s' r
 delayIncompletePositive forth back f s =
    maybe (Delay (error "incomplete old input") f') f (forth s)
    where f' = delayIncompleteNegative back (delayIncompletePositive forth back f . (s <>))
@@ -456,25 +456,31 @@ delayIncompleteNegative back f t =
 mapMaybeInputPrefix :: (MonoidNull s, Monoid s')
                     => (s -> Maybe (s', s)) -> (s' -> Maybe (s, s')) -> Parser t s r -> Parser t s' r
 mapMaybeInputPrefix _ _ (Failure msg) = Failure msg
-mapMaybeInputPrefix forth back (Result s r) = Result (convertedForth forth s) r
+mapMaybeInputPrefix forth back (Result s r) = delayIncompletePositivePrefix forth back (`Result` r) s
 mapMaybeInputPrefix forth back (ResultPart r e f) =
-   ResultPart r (mapMaybeInputPrefix forth back e) (delayIncompleteNegativePrefix back $ mapMaybeInputPrefix forth back . f)
+   ResultPart r (mapMaybeInputPrefix forth back e)
+      (delayIncompleteNegativePrefix back $ mapMaybeInputPrefix forth back . f)
 mapMaybeInputPrefix forth back (Delay e f) =
    Delay (mapMaybeInputPrefix forth back e) (delayIncompleteNegativePrefix back $ mapMaybeInputPrefix forth back . f)
 mapMaybeInputPrefix forth back (Choice p1 p2) =
    Choice (mapMaybeInputPrefix forth back p1) (mapMaybeInputPrefix forth back p2)
 mapMaybeInputPrefix forth back (ResultStructure (Just s) r) =
-   ResultStructure (Just $ convertedForth forth s) (mapMaybeInputPrefix forth back Rank2.<$> r)
+   delayIncompletePositivePrefix forth back
+      (\s'-> ResultStructure (Just s') (mapMaybeInputPrefix forth back Rank2.<$> r)) s
 mapMaybeInputPrefix forth back p@(ResultStructure Nothing _) =
    Delay (mapMaybeInputPrefix forth back $ feedEof p)
          (delayIncompleteNegativePrefix back $ mapMaybeInputPrefix forth back . (`feed` p))
 
-convertedForth :: (MonoidNull s, Semigroup s') => (s -> Maybe (s', s)) -> s -> s'
-convertedForth f s
-  | Just (prefix, suffix) <- f s = if null suffix then prefix else prefix <> convertedForth f suffix
-  | otherwise = error "incomplete old input"
-
-delayIncompleteNegativePrefix :: (Monoid s, Monoid s') => (s' -> Maybe (s, s')) -> (s -> Parser t s' r) -> s' -> Parser t s' r
+delayIncompletePositivePrefix :: (MonoidNull s, Monoid s')
+                              => (s -> Maybe (s', s)) -> (s' -> Maybe (s, s')) -> (s' -> Parser t s' r) -> s
+                              -> Parser t s' r
+delayIncompletePositivePrefix forth back f s
+   | Just (prefix, suffix) <- forth s = if null suffix then f prefix
+                                        else delayIncompletePositivePrefix forth back (f . (prefix <>)) suffix
+   | otherwise = Delay (error "incomplete old input") f'
+   where f' = delayIncompleteNegativePrefix back (delayIncompletePositivePrefix forth back f . (s <>))
+delayIncompleteNegativePrefix :: (Monoid s, Monoid s')
+                              => (s' -> Maybe (s, s')) -> (s -> Parser t s' r) -> s' -> Parser t s' r
 delayIncompleteNegativePrefix back f t
    | Just (prefix, suffix) <- back t = feed suffix (f prefix)
    | otherwise = Delay (error "incomplete new input") (delayIncompleteNegativePrefix back f . (t <>))
