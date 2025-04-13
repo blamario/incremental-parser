@@ -82,8 +82,9 @@ feed s (Result s' r) = Result (mappend s' s) r
 feed s (ResultPart r _ f) = resultPart r (f s)
 feed s (Choice p1 p2) = feed s p1 <||> feed s p2
 feed s (Delay _ f) = f s
-feed s (ResultStructure s' r) = ResultStructure (s'' <> s') r'
-   where (r', s'') = runState (Rank2.traverse feedMaybe r) (Just s)
+feed s (ResultStructure (Just s') r) = ResultStructure (Just $ mappend s' s) r
+feed s (ResultStructure Nothing r) = ResultStructure s' r'
+   where (r', s') = runState (Rank2.traverse feedMaybe r) (Just s)
 
 feedMaybe :: Monoid s => Parser t s r -> State (Maybe s) (Parser t s r)
 feedMaybe p = state (\s-> let (p', s') = case maybe id feed s p
