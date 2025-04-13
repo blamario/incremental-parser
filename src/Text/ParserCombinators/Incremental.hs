@@ -453,7 +453,7 @@ delayIncompleteNegative back f t =
 -- types, then
 --
 -- > mapMaybeInput f g == mapMaybeInputPrefix (fmap (, mempty) . f) (fmap (, mempty) . g)
-mapMaybeInputPrefix :: (MonoidNull s, Monoid s')
+mapMaybeInputPrefix :: (MonoidNull s, MonoidNull s')
                     => (s -> Maybe (s', s)) -> (s' -> Maybe (s, s')) -> Parser t s r -> Parser t s' r
 mapMaybeInputPrefix _ _ (Failure msg) = Failure msg
 mapMaybeInputPrefix forth back (Result s r) = delayIncompletePositivePrefix forth back (`Result` r) s
@@ -471,19 +471,20 @@ mapMaybeInputPrefix forth back p@(ResultStructure Nothing _) =
    Delay (mapMaybeInputPrefix forth back $ feedEof p)
          (delayIncompleteNegativePrefix back $ mapMaybeInputPrefix forth back . (`feed` p))
 
-delayIncompletePositivePrefix :: (MonoidNull s, Monoid s')
+delayIncompletePositivePrefix :: (MonoidNull s, MonoidNull s')
                               => (s -> Maybe (s', s)) -> (s' -> Maybe (s, s')) -> (s' -> Parser t s' r) -> s
                               -> Parser t s' r
 delayIncompletePositivePrefix forth back f s
+   | null s = f mempty
    | Just (prefix, suffix) <- forth s = if null suffix then f prefix
                                         else delayIncompletePositivePrefix forth back (f . (prefix <>)) suffix
-   | otherwise = Delay (error "incomplete old input") f'
+   | otherwise = Delay (Failure "incomplete old input") f'
    where f' = delayIncompleteNegativePrefix back (delayIncompletePositivePrefix forth back f . (s <>))
-delayIncompleteNegativePrefix :: (Monoid s, Monoid s')
+delayIncompleteNegativePrefix :: (Monoid s, MonoidNull s')
                               => (s' -> Maybe (s, s')) -> (s -> Parser t s' r) -> s' -> Parser t s' r
 delayIncompleteNegativePrefix back f t
-   | Just (prefix, suffix) <- back t = feed suffix (f prefix)
-   | otherwise = Delay (error "incomplete new input") (delayIncompleteNegativePrefix back f . (t <>))
+   | Just (prefix, suffix) <- back t = if null suffix then f prefix else feed suffix (f prefix)
+   | otherwise = Delay (Failure "incomplete new input") (delayIncompleteNegativePrefix back f . (t <>))
 
 more :: (s -> Parser t s r) -> Parser t s r
 more = Delay (Failure "expected more input, encountered end of input")
